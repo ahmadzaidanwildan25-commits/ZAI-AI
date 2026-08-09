@@ -1,7 +1,9 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -165,7 +167,7 @@ class _ZAIShellState extends State<ZAIShell> {
         return const ZAIDashboard();
 
       case 1:
-        return const ZAIChatPage();
+        return ZAIChatPage();
 
       case 2:
         return const ZAIVoicePage();
@@ -1718,7 +1720,6 @@ class ZAIPage extends StatelessWidget {
 // ============================================================
 // CHAT
 // ============================================================
-
 class ZAIChatPage extends StatefulWidget {
   const ZAIChatPage({super.key});
 
@@ -1727,36 +1728,250 @@ class ZAIChatPage extends StatefulWidget {
 }
 
 class _ZAIChatPageState extends State<ZAIChatPage> {
-  final controller = TextEditingController();
+  final TextEditingController controller =
+      TextEditingController();
 
-  final messages = <Map<String, String>>[
-    {
+  final List<Map<String, String>> messages =
+      <Map<String, String>>[
+    <String, String>{
       'role': 'zai',
       'text':
           'ZAI Core online. I am ready for your command.',
     },
   ];
 
-  void send() {
-    final text = controller.text.trim();
+  bool isProcessing = false;
 
-    if (text.isEmpty) return;
+  // ============================================================
+  // ZAI SERVER
+  // ============================================================
+
+  static const String zaiServer =
+      'http://127.0.0.1:8000';
+
+  // ============================================================
+  // SEND
+  // ============================================================
+
+  Future<void> send() async {
+    final String text = controller.text.trim();
+
+    if (text.isEmpty || isProcessing) {
+      return;
+    }
+
+    controller.clear();
 
     setState(() {
-      messages.add({
-        'role': 'user',
-        'text': text,
-      });
+      messages.add(
+        <String, String>{
+          'role': 'user',
+          'text': text,
+        },
+      );
 
-      messages.add({
-        'role': 'zai',
-        'text':
-            'Command received. AI functionality will be connected in the next phase.',
-      });
+      messages.add(
+        <String, String>{
+          'role': 'zai',
+          'text': '',
+        },
+      );
 
-      controller.clear();
+      isProcessing = true;
     });
+
+    final int zaiMessageIndex =
+        messages.length - 1;
+
+    try {
+      final List<Map<String, String>> history =
+          <Map<String, String>>[];
+
+      for (int i = 0;
+          i < zaiMessageIndex;
+          i++) {
+        final Map<String, String> message =
+            messages[i];
+
+        final String role =
+            message['role'] ?? '';
+
+        final String content =
+            message['text'] ?? '';
+
+        if (content.trim().isEmpty) {
+          continue;
+        }
+
+        if (role == 'user') {
+          history.add(
+            <String, String>{
+              'role': 'user',
+              'content': content,
+            },
+          );
+        } else if (role == 'zai') {
+          history.add(
+            <String, String>{
+              'role': 'assistant',
+              'content': content,
+            },
+          );
+        }
+      }
+
+      final http.Request request =
+          http.Request(
+        'POST',
+        Uri.parse('$zaiServer/chat'),
+      );
+
+      request.headers[
+          'Content-Type'] = 'application/json';
+
+      request.body = jsonEncode(
+        <String, dynamic>{
+          'message': text,
+          'history': history,
+          'mode': 'auto',
+        },
+      );
+
+      final http.StreamedResponse response =
+          await request.send();
+
+      if (response.statusCode != 200) {
+        final String error =
+            await response.stream.bytesToString();
+
+        throw Exception(
+          'ZAI Server Error '
+          '${response.statusCode}: $error',
+        );
+      }
+
+      final StringBuffer answer =
+          StringBuffer();
+
+      await for (final String line
+          in response.stream
+              .transform(utf8.decoder)
+              .transform(
+                const LineSplitter(),
+              )) {
+        if (line.trim().isEmpty) {
+          continue;
+        }
+
+        Map<String, dynamic> data;
+
+        try {
+          data = jsonDecode(line)
+              as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+
+        final String type =
+            data['type']?.toString() ?? '';
+
+        // --------------------------------------------------------
+        // START
+        // --------------------------------------------------------
+
+        if (type == 'start') {
+          continue;
+        }
+
+        // --------------------------------------------------------
+        // TOKEN
+        // --------------------------------------------------------
+
+        if (type == 'token') {
+          final String token =
+              data['content']?.toString() ?? '';
+
+          if (token.isEmpty) {
+            continue;
+          }
+
+          answer.write(token);
+
+          if (!mounted) {
+            return;
+          }
+
+          setState(() {
+            messages[zaiMessageIndex] =
+                <String, String>{
+              'role': 'zai',
+              'text': answer.toString(),
+            };
+          });
+
+          continue;
+        }
+
+        // --------------------------------------------------------
+        // ERROR
+        // --------------------------------------------------------
+
+        if (type == 'error') {
+          throw Exception(
+            data['message']?.toString() ??
+                'Unknown ZAI error.',
+          );
+        }
+
+        // --------------------------------------------------------
+        // DONE
+        // --------------------------------------------------------
+
+        if (type == 'done') {
+          break;
+        }
+      }
+
+      if (answer.isEmpty) {
+        throw Exception(
+          'ZAI tidak mengirimkan jawaban.',
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        messages[zaiMessageIndex] =
+            <String, String>{
+          'role': 'zai',
+          'text':
+              'ZAI connection error:\n$error',
+        };
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          isProcessing = false;
+        });
+      }
+    }
   }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -1773,13 +1988,20 @@ class _ZAIChatPageState extends State<ZAIChatPage> {
                 children: [
                   Expanded(
                     child: ListView.builder(
-                      padding: const EdgeInsets.all(18),
+                      padding:
+                          const EdgeInsets.all(18),
                       itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final message = messages[index];
+                      itemBuilder:
+                          (context, index) {
+                        final message =
+                            messages[index];
 
-                        final isUser =
-                            message['role'] == 'user';
+                        final bool isUser =
+                            message['role'] ==
+                                'user';
+
+                        final String text =
+                            message['text'] ?? '';
 
                         return Align(
                           alignment: isUser
@@ -1788,34 +2010,92 @@ class _ZAIChatPageState extends State<ZAIChatPage> {
                           child: Container(
                             constraints:
                                 const BoxConstraints(
-                              maxWidth: 650,
+                              maxWidth: 700,
                             ),
                             margin:
                                 const EdgeInsets.only(
                               bottom: 12,
                             ),
                             padding:
-                                const EdgeInsets.all(13),
-                            decoration: BoxDecoration(
-                              borderRadius:
-                                  BorderRadius.circular(14),
+                                const EdgeInsets.all(
+                              15,
+                            ),
+                            decoration:
+                                BoxDecoration(
                               color: isUser
-                                  ? ZAITheme.cyan
-                                      .withValues(alpha: .08)
-                                  : ZAITheme.surface2,
+                                  ? const Color(
+                                      0xFF07354A,
+                                    )
+                                  : const Color(
+                                      0xFF07141F,
+                                    ),
+                              borderRadius:
+                                  BorderRadius.circular(
+                                14,
+                              ),
                               border: Border.all(
                                 color: isUser
-                                    ? ZAITheme.cyan
-                                        .withValues(alpha: .18)
-                                    : ZAITheme.border,
+                                    ? const Color(
+                                        0xFF087C9D,
+                                      )
+                                    : const Color(
+                                        0xFF17364A,
+                                      ),
                               ),
                             ),
-                            child: Text(
-                              message['text'] ?? '',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                height: 1.5,
-                              ),
+                            child: Row(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment
+                                      .start,
+                              children: [
+                                Icon(
+                                  isUser
+                                      ? Icons
+                                          .person_outline
+                                      : Icons
+                                          .auto_awesome,
+                                  color: isUser
+                                      ? const Color(
+                                          0xFF8EB5C7,
+                                        )
+                                      : const Color(
+                                          0xFF00D9FF,
+                                        ),
+                                  size: 20,
+                                ),
+                                const SizedBox(
+                                  width: 10,
+                                ),
+                                Expanded(
+                                  child: text.isEmpty &&
+                                          !isUser
+                                      ? const Text(
+                                          'ZAI is thinking...',
+                                          style:
+                                              TextStyle(
+                                            color:
+                                                Color(
+                                              0xFF8CA8B8,
+                                            ),
+                                            fontSize:
+                                                13,
+                                          ),
+                                        )
+                                      : SelectableText(
+                                          text,
+                                          style:
+                                              const TextStyle(
+                                            color:
+                                                Colors
+                                                    .white,
+                                            fontSize:
+                                                15,
+                                            height:
+                                                1.5,
+                                          ),
+                                        ),
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -1823,40 +2103,122 @@ class _ZAIChatPageState extends State<ZAIChatPage> {
                     ),
                   ),
 
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: const BoxDecoration(
-                      border: Border(
-                        top: BorderSide(
-                          color: ZAITheme.border,
-                        ),
-                      ),
-                    ),
+                  // ==================================================
+                  // INPUT
+                  // ==================================================
+
+                  Padding(
+                    padding:
+                        const EdgeInsets.all(14),
                     child: Row(
                       children: [
-                        IconButton(
-                          onPressed: () {},
-                          icon: const Icon(
-                            Icons.attach_file_rounded,
-                          ),
-                        ),
                         Expanded(
                           child: TextField(
-                            controller: controller,
-                            onSubmitted: (_) => send(),
+                            controller:
+                                controller,
+                            enabled:
+                                !isProcessing,
+                            onSubmitted: (_) =>
+                                send(),
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                            ),
                             decoration:
-                                const InputDecoration(
+                                InputDecoration(
                               hintText:
-                                  'Enter command for ZAI...',
-                              border: InputBorder.none,
+                                  'Ask ZAI anything...',
+                              hintStyle:
+                                  const TextStyle(
+                                color:
+                                    Color(
+                                  0xFF557181,
+                                ),
+                              ),
+                              filled: true,
+                              fillColor:
+                                  const Color(
+                                0xFF07131E,
+                              ),
+                              border:
+                                  OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(
+                                  14,
+                                ),
+                                borderSide:
+                                    const BorderSide(
+                                  color:
+                                      Color(
+                                    0xFF15384A,
+                                  ),
+                                ),
+                              ),
+                              enabledBorder:
+                                  OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(
+                                  14,
+                                ),
+                                borderSide:
+                                    const BorderSide(
+                                  color:
+                                      Color(
+                                    0xFF15384A,
+                                  ),
+                                ),
+                              ),
+                              focusedBorder:
+                                  OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(
+                                  14,
+                                ),
+                                borderSide:
+                                    const BorderSide(
+                                  color:
+                                      Color(
+                                    0xFF00D9FF,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                        IconButton(
-                          onPressed: send,
-                          icon: const Icon(
-                            Icons.arrow_upward_rounded,
-                            color: ZAITheme.cyan,
+
+                        const SizedBox(
+                          width: 10,
+                        ),
+
+                        Container(
+                          decoration:
+                              BoxDecoration(
+                            color: isProcessing
+                                ? const Color(
+                                    0xFF174257,
+                                  )
+                                : const Color(
+                                    0xFF00AFCF,
+                                  ),
+                            borderRadius:
+                                BorderRadius.circular(
+                              14,
+                            ),
+                          ),
+                          child: IconButton(
+                            onPressed:
+                                isProcessing
+                                    ? null
+                                    : send,
+                            icon: const Icon(
+                              Icons.arrow_upward,
+                              color:
+                                  Colors.white,
+                            ),
                           ),
                         ),
                       ],
@@ -1871,7 +2233,6 @@ class _ZAIChatPageState extends State<ZAIChatPage> {
     );
   }
 }
-
 // ============================================================
 // VOICE
 // ============================================================
@@ -2585,3 +2946,4 @@ class _ZAIFeatureCardState extends State<ZAIFeatureCard> {
     );
   }
 }
+

@@ -12,88 +12,33 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  // ============================================================
-  // ZAI SERVER
-  // ============================================================
-
   static const String _serverUrl = 'http://127.0.0.1:8000';
-
-  // ============================================================
-  // CONTROLLERS
-  // ============================================================
 
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   final List<_ChatMessage> _messages = <_ChatMessage>[];
 
-  // ============================================================
-  // STATE
-  // ============================================================
-
   bool _isTyping = false;
-  bool _serverOnline = false;
-
-  // ============================================================
-  // HTTP CLIENT
-  // ============================================================
-
-  final http.Client _httpClient = http.Client();
-
-  // ============================================================
-  // INIT
-  // ============================================================
+  String _currentMode = 'auto';
 
   @override
   void initState() {
     super.initState();
 
-    _checkServer();
+    _messages.add(
+      const _ChatMessage(
+        text: 'ZAI Core online. Saya siap membantu Anda.',
+        isUser: false,
+      ),
+    );
   }
-
-  // ============================================================
-  // DISPOSE
-  // ============================================================
 
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
-    _httpClient.close();
-
     super.dispose();
-  }
-
-  // ============================================================
-  // CHECK ZAI SERVER
-  // ============================================================
-
-  Future<void> _checkServer() async {
-    try {
-      final http.Response response = await _httpClient
-          .get(
-            Uri.parse('$_serverUrl/health'),
-          )
-          .timeout(
-            const Duration(seconds: 3),
-          );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _serverOnline = response.statusCode == 200;
-      });
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _serverOnline = false;
-      });
-    }
   }
 
   // ============================================================
@@ -107,10 +52,6 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // ----------------------------------------------------------
-    // ADD USER MESSAGE
-    // ----------------------------------------------------------
-
     setState(() {
       _messages.add(
         _ChatMessage(
@@ -120,214 +61,35 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       _controller.clear();
-
       _isTyping = true;
     });
 
     _scrollToBottom();
 
-    // ----------------------------------------------------------
-    // ADD EMPTY ZAI MESSAGE
-    // ----------------------------------------------------------
-
-    final int assistantIndex = _messages.length;
+    final _ChatMessage aiMessage = _ChatMessage(
+      text: '',
+      isUser: false,
+    );
 
     setState(() {
-      _messages.add(
-        const _ChatMessage(
-          text: '',
-          isUser: false,
-        ),
-      );
+      _messages.add(aiMessage);
     });
 
     _scrollToBottom();
 
     try {
-      // --------------------------------------------------------
-      // BUILD HISTORY
-      // --------------------------------------------------------
-
-      final List<Map<String, dynamic>> history =
-          <Map<String, dynamic>>[];
-
-      for (final _ChatMessage message in _messages) {
-        if (message.isUser) {
-          history.add(
-            <String, dynamic>{
-              'role': 'user',
-              'content': message.text,
-            },
-          );
-        } else if (message.text.isNotEmpty) {
-          history.add(
-            <String, dynamic>{
-              'role': 'assistant',
-              'content': message.text,
-            },
-          );
-        }
-      }
-
-      // --------------------------------------------------------
-      // REMOVE CURRENT EMPTY ASSISTANT FROM HISTORY
-      // --------------------------------------------------------
-
-      if (history.isNotEmpty &&
-          history.last['role'] == 'assistant' &&
-          history.last['content'] == '') {
-        history.removeLast();
-      }
-
-      // --------------------------------------------------------
-      // REQUEST
-      // --------------------------------------------------------
-
-      final http.Request request = http.Request(
-        'POST',
-        Uri.parse('$_serverUrl/chat'),
+      await _streamFromZAI(
+        text,
+        aiMessage,
       );
-
-      request.headers['Content-Type'] = 'application/json';
-      request.headers['Accept'] = 'application/x-ndjson';
-
-      request.body = jsonEncode(
-        <String, dynamic>{
-          'message': text,
-          'history': history,
-          'mode': 'auto',
-        },
-      );
-
-      // --------------------------------------------------------
-      // SEND STREAMING REQUEST
-      // --------------------------------------------------------
-
-      final http.StreamedResponse response =
-          await _httpClient.send(request);
-
-      if (response.statusCode != 200) {
-        final String errorBody =
-            await response.stream.bytesToString();
-
-        throw Exception(
-          'ZAI Server error ${response.statusCode}: $errorBody',
-        );
-      }
-
-      // --------------------------------------------------------
-      // READ STREAM
-      // --------------------------------------------------------
-
-      final Stream<String> lines = response.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-
-      await for (final String line in lines) {
-        if (line.trim().isEmpty) {
-          continue;
-        }
-
-        Map<String, dynamic> data;
-
-        try {
-          data = jsonDecode(line) as Map<String, dynamic>;
-        } catch (_) {
-          continue;
-        }
-
-        final String type =
-            data['type']?.toString() ?? '';
-
-        // ------------------------------------------------------
-        // START
-        // ------------------------------------------------------
-
-        if (type == 'start') {
-          if (mounted) {
-            setState(() {
-              _serverOnline = true;
-            });
-          }
-
-          continue;
-        }
-
-        // ------------------------------------------------------
-        // TOKEN
-        // ------------------------------------------------------
-
-        if (type == 'token') {
-          final String token =
-              data['content']?.toString() ?? '';
-
-          if (token.isEmpty) {
-            continue;
-          }
-
-          if (!mounted) {
-            continue;
-          }
-
-          setState(() {
-            _messages[assistantIndex] = _ChatMessage(
-              text: _messages[assistantIndex].text + token,
-              isUser: false,
-            );
-          });
-
-          _scrollToBottom();
-
-          continue;
-        }
-
-        // ------------------------------------------------------
-        // ERROR
-        // ------------------------------------------------------
-
-        if (type == 'error') {
-          final String errorMessage =
-              data['message']?.toString() ??
-                  'ZAI mengalami kesalahan.';
-
-          if (!mounted) {
-            continue;
-          }
-
-          setState(() {
-            _messages[assistantIndex] = _ChatMessage(
-              text: 'ZAI ERROR:\n$errorMessage',
-              isUser: false,
-            );
-          });
-
-          continue;
-        }
-
-        // ------------------------------------------------------
-        // DONE
-        // ------------------------------------------------------
-
-        if (type == 'done') {
-          continue;
-        }
-      }
     } catch (error) {
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _serverOnline = false;
-
-        _messages[assistantIndex] = _ChatMessage(
-          text:
-              'Tidak dapat terhubung ke ZAI Core.\n\n'
-              'Pastikan FastAPI berjalan di:\n'
-              '$_serverUrl\n\n'
-              'Error:\n$error',
-          isUser: false,
-        );
+        aiMessage.text =
+            'Terjadi kesalahan saat menghubungkan ke ZAI:\n$error';
       });
     } finally {
       if (!mounted) {
@@ -343,6 +105,173 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================================
+  // ZAI STREAM
+  // ============================================================
+
+  Future<void> _streamFromZAI(
+    String message,
+    _ChatMessage aiMessage,
+  ) async {
+    final List<Map<String, String>> history =
+        <Map<String, String>>[];
+
+    // Kirim beberapa pesan terakhir sebagai context.
+    final List<_ChatMessage> recentMessages =
+        _messages.length > 9
+            ? _messages.sublist(_messages.length - 9)
+            : List<_ChatMessage>.from(_messages);
+
+    for (final _ChatMessage item in recentMessages) {
+      if (item.text.trim().isEmpty) {
+        continue;
+      }
+
+      history.add(
+        <String, String>{
+          'role': item.isUser ? 'user' : 'assistant',
+          'content': item.text,
+        },
+      );
+    }
+
+    // Hapus pesan AI kosong terakhir agar tidak dikirim sebagai history.
+    if (history.isNotEmpty &&
+        history.last['role'] == 'assistant' &&
+        history.last['content']!.isEmpty) {
+      history.removeLast();
+    }
+
+    final Map<String, dynamic> payload = <String, dynamic>{
+      'message': message,
+      'history': history,
+      'mode': 'auto',
+    };
+
+    final http.Request request = http.Request(
+      'POST',
+      Uri.parse('$_serverUrl/chat'),
+    );
+
+    request.headers['Content-Type'] = 'application/json';
+    request.headers['Accept'] = 'application/x-ndjson';
+
+    request.body = jsonEncode(payload);
+
+    final http.StreamedResponse response =
+        await request.send();
+
+    if (response.statusCode != 200) {
+      final String errorBody =
+          await response.stream.bytesToString();
+
+      throw Exception(
+        'ZAI Server HTTP ${response.statusCode}\n$errorBody',
+      );
+    }
+
+    final Stream<String> lines =
+        response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter());
+
+    await for (final String line in lines) {
+      if (line.trim().isEmpty) {
+        continue;
+      }
+
+      Map<String, dynamic> data;
+
+      try {
+        data = jsonDecode(line) as Map<String, dynamic>;
+      } catch (_) {
+        continue;
+      }
+
+      final String type =
+          data['type']?.toString() ?? '';
+
+      // ========================================================
+      // START
+      // ========================================================
+
+      if (type == 'start') {
+        _currentMode =
+            data['mode']?.toString() ?? 'auto';
+
+        if (mounted) {
+          setState(() {});
+        }
+
+        continue;
+      }
+
+      // ========================================================
+      // TOKEN
+      // ========================================================
+
+      if (type == 'token') {
+        final String content =
+            data['content']?.toString() ?? '';
+
+        if (content.isEmpty) {
+          continue;
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          aiMessage.text += content;
+        });
+
+        _scrollToBottom();
+
+        continue;
+      }
+
+      // ========================================================
+      // DONE
+      // ========================================================
+
+      if (type == 'done') {
+        continue;
+      }
+
+      // ========================================================
+      // ERROR
+      // ========================================================
+
+      if (type == 'error') {
+        final String errorMessage =
+            data['message']?.toString() ??
+                'Unknown ZAI error.';
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          aiMessage.text =
+              'ZAI Error:\n$errorMessage';
+        });
+
+        continue;
+      }
+    }
+
+    // Jika server selesai tetapi tidak menghasilkan token.
+    if (aiMessage.text.trim().isEmpty) {
+      aiMessage.text =
+          'ZAI tidak menghasilkan respons.';
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // ============================================================
   // QUICK COMMAND
   // ============================================================
 
@@ -352,7 +281,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _controller.text = command;
-
     _sendMessage();
   }
 
@@ -368,7 +296,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 120),
+        duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
       );
     });
@@ -434,7 +362,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             child: const Icon(
-              Icons.chat_bubble_outline,
+              Icons.auto_awesome,
               color: Color(0xFF00D9FF),
               size: 24,
             ),
@@ -458,7 +386,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'INTELLIGENCE CONVERSATION INTERFACE',
+                  'SUPER ZAI INTELLIGENCE CORE',
                   style: TextStyle(
                     color: Color(0xFF7190A5),
                     fontSize: 10,
@@ -476,7 +404,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================================
-  // ONLINE INDICATOR
+  // ONLINE
   // ============================================================
 
   Widget _buildOnlineIndicator() {
@@ -486,35 +414,25 @@ class _ChatScreenState extends State<ChatScreen> {
         vertical: 8,
       ),
       decoration: BoxDecoration(
-        color: _serverOnline
-            ? const Color(0xFF03231E)
-            : const Color(0xFF241616),
+        color: const Color(0xFF03231E),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: _serverOnline
-              ? const Color(0xFF00D9A5)
-              : const Color(0xFFFF5C5C),
+          color: const Color(0xFF00D9A5),
         ),
       ),
-      child: Row(
+      child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(
             Icons.circle,
-            color: _serverOnline
-                ? const Color(0xFF00E6A8)
-                : const Color(0xFFFF5C5C),
+            color: Color(0xFF00E6A8),
             size: 8,
           ),
-
-          const SizedBox(width: 7),
-
+          SizedBox(width: 7),
           Text(
-            _serverOnline ? 'ONLINE' : 'OFFLINE',
+            'ONLINE',
             style: TextStyle(
-              color: _serverOnline
-                  ? const Color(0xFF00E6A8)
-                  : const Color(0xFFFF5C5C),
+              color: Color(0xFF00E6A8),
               fontSize: 10,
               fontWeight: FontWeight.bold,
               letterSpacing: 1,
@@ -628,7 +546,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================================
-  // SUGGESTION CARD
+  // SUGGESTION
   // ============================================================
 
   Widget _buildSuggestionCard({
@@ -686,15 +604,11 @@ class _ChatScreenState extends State<ChatScreen> {
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(24),
-      itemCount: _messages.length +
-          (_isTyping ? 1 : 0),
-      itemBuilder:
-          (BuildContext context, int index) {
-        if (_isTyping &&
-            index == _messages.length) {
-          return _buildTypingIndicator();
-        }
-
+      itemCount: _messages.length,
+      itemBuilder: (
+        BuildContext context,
+        int index,
+      ) {
         return _buildMessageBubble(
           _messages[index],
         );
@@ -752,68 +666,16 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(width: 13),
 
             Expanded(
-              child: SelectableText(
-                message.text.isEmpty
-                    ? 'ZAI is processing...'
-                    : message.text,
-                style: TextStyle(
-                  color: message.text.isEmpty
-                      ? const Color(0xFF8CA8B8)
-                      : Colors.white,
-                  fontSize: 15,
-                  height: 1.5,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // TYPING
-  // ============================================================
-
-  Widget _buildTypingIndicator() {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(
-          bottom: 16,
-        ),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 13,
-        ),
-        decoration: BoxDecoration(
-          color: const Color(0xFF07141F),
-          borderRadius:
-              BorderRadius.circular(14),
-          border: Border.all(
-            color: const Color(0xFF17364A),
-          ),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            SizedBox(
-              width: 15,
-              height: 15,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Color(0xFF00D9FF),
-              ),
-            ),
-
-            SizedBox(width: 10),
-
-            Text(
-              'ZAI is thinking...',
-              style: TextStyle(
-                color: Color(0xFF8CA8B8),
-                fontSize: 13,
-              ),
+              child: message.text.isEmpty
+                  ? const _TypingDots()
+                  : SelectableText(
+                      message.text,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        height: 1.5,
+                      ),
+                    ),
             ),
           ],
         ),
@@ -829,16 +691,15 @@ class _ChatScreenState extends State<ChatScreen> {
     return SizedBox(
       height: 52,
       child: ListView(
-        padding:
-            const EdgeInsets.symmetric(
+        padding: const EdgeInsets.symmetric(
           horizontal: 18,
         ),
         scrollDirection: Axis.horizontal,
         children: <Widget>[
           _buildQuickChip('Check system'),
-          _buildQuickChip('Open browser'),
           _buildQuickChip('Analyze'),
           _buildQuickChip('Create project'),
+          _buildQuickChip('Explain this'),
         ],
       ),
     );
@@ -846,12 +707,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildQuickChip(String text) {
     return Padding(
-      padding:
-          const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.only(right: 8),
       child: ActionChip(
         label: Text(text),
-        onPressed: () =>
-            _sendQuickCommand(text),
+        onPressed: _isTyping
+            ? null
+            : () => _sendQuickCommand(text),
         backgroundColor:
             const Color(0xFF071923),
         side: const BorderSide(
@@ -933,9 +794,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 border:
                     OutlineInputBorder(
                   borderRadius:
-                      BorderRadius.circular(
-                    16,
-                  ),
+                      BorderRadius.circular(16),
                   borderSide:
                       const BorderSide(
                     color: Color(0xFF15384A),
@@ -944,9 +803,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 enabledBorder:
                     OutlineInputBorder(
                   borderRadius:
-                      BorderRadius.circular(
-                    16,
-                  ),
+                      BorderRadius.circular(16),
                   borderSide:
                       const BorderSide(
                     color: Color(0xFF15384A),
@@ -955,12 +812,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 focusedBorder:
                     OutlineInputBorder(
                   borderRadius:
-                      BorderRadius.circular(
-                    16,
-                  ),
+                      BorderRadius.circular(16),
                   borderSide:
                       const BorderSide(
                     color: Color(0xFF00D9FF),
+                  ),
+                ),
+                disabledBorder:
+                    OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius.circular(16),
+                  borderSide:
+                      const BorderSide(
+                    color: Color(0xFF15384A),
                   ),
                 ),
               ),
@@ -971,8 +835,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
           IconButton(
             tooltip: 'Voice',
-            onPressed:
-                _isTyping ? null : () {},
+            onPressed: _isTyping
+                ? null
+                : () {},
             icon: const Icon(
               Icons.mic_none,
               color: Color(0xFF00D9FF),
@@ -1015,15 +880,95 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ============================================================
-// CHAT MESSAGE MODEL
+// CHAT MESSAGE
 // ============================================================
 
 class _ChatMessage {
-  final String text;
+  String text;
   final bool isUser;
 
-  const _ChatMessage({
+  _ChatMessage({
     required this.text,
     required this.isUser,
   });
+}
+
+// ============================================================
+// TYPING DOTS
+// ============================================================
+
+class _TypingDots extends StatefulWidget {
+  const _TypingDots();
+
+  @override
+  State<_TypingDots> createState() =>
+      _TypingDotsState();
+}
+
+class _TypingDotsState
+    extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration:
+          const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (
+        BuildContext context,
+        Widget? child,
+      ) {
+        final double value =
+            _controller.value;
+
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            _dot(value, 0.0),
+            const SizedBox(width: 5),
+            _dot(value, 0.2),
+            const SizedBox(width: 5),
+            _dot(value, 0.4),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _dot(
+    double value,
+    double offset,
+  ) {
+    final double phase =
+        (value + offset) % 1.0;
+
+    final double opacity =
+        0.3 + (phase < 0.5 ? phase : 1 - phase);
+
+    return Opacity(
+      opacity: opacity.clamp(0.3, 1.0),
+      child: const Icon(
+        Icons.circle,
+        color: Color(0xFF00D9FF),
+        size: 7,
+      ),
+    );
+  }
 }
