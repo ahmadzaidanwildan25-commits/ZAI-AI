@@ -1,104 +1,128 @@
 ﻿from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from intent.engine import get_intent_engine
+from intent.router import IntentRouter
+from memory.manager import MemoryManager
+from response.engine import ResponseEngine
+from core.tool_engine import get_tool_engine
 
-# ============================================================
-# SUPER ZAI
-# COGNITIVE ORCHESTRATOR
-# VERSION 0.9.2
-#
-# Pipeline:
-#
-# USER
-#   ↓
-# INTENT
-#   ↓
-# ROUTING
-#   ↓
-# LOCAL RESPONSE / TOOL EXECUTION / LLM
-#   ↓
-# RESPONSE
-#
-# Tool routes:
-#   calculator
-#   weather
-#   search
-# ============================================================
+
+@dataclass
+class OrchestratorResult:
+
+    handled: bool
+    response: Optional[str]
+    route: str
+    intent: str
+    confidence: float = 0.0
+    metadata: dict = field(
+        default_factory=dict
+    )
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+
+        return {
+            "handled": self.handled,
+            "response": self.response,
+            "route": self.route,
+            "intent": self.intent,
+            "metadata": self.metadata,
+            "confidence": self.confidence,
+            "error": self.error,
+        }
 
 
 class CognitiveOrchestrator:
     """
-    Main cognitive pipeline for Super ZAI.
+    Super ZAI Cognitive Pipeline.
 
-    Responsibilities:
-    1. Analyze user intent.
-    2. Route the request.
-    3. Execute local response when possible.
-    4. Execute tools when required.
-    5. Return structured result.
-    6. Fall back safely when no handler exists.
+    v1.0.0
+
+    Pipeline:
+
+        intent
+          ↓
+        routing
+          ↓
+        local / memory / tool / llm
+          ↓
+        response
+          ↓
+        fallback
     """
 
-    VERSION = "0.9.2"
+    VERSION = "1.0.0"
 
     def __init__(
         self,
-        intent_engine,
-        router,
-        response_engine,
+        intent_engine=None,
+        router=None,
+        response_engine=None,
         tool_engine=None,
     ):
-        self.intent_engine = intent_engine
-        self.router = router
-        self.response_engine = response_engine
 
-        # ToolEngine is optional for backward compatibility.
-        # If not injected, we lazily load the singleton.
-        self.tool_engine = tool_engine
+        self.intent_engine = (
+            intent_engine
+            or get_intent_engine()
+        )
 
-    # ========================================================
-    # TOOL ENGINE
-    # ========================================================
+        self.memory_manager = (
+            MemoryManager()
+        )
 
-    def _get_tool_engine(self):
-        """
-        Lazily resolve ToolEngine.
+        self.router = (
+            router
+            or IntentRouter(
+                self.memory_manager
+            )
+        )
 
-        This keeps older code compatible:
-            CognitiveOrchestrator(i, r, e)
+        self.response_engine = (
+            response_engine
+            or ResponseEngine(
+                self.memory_manager
+            )
+        )
 
-        while allowing:
-            CognitiveOrchestrator(i, r, e, t)
-        """
+        self.tool_engine = (
+            tool_engine
+            or get_tool_engine()
+        )
 
-        if self.tool_engine is not None:
-            return self.tool_engine
-
-        try:
-            from core.tool_engine import get_tool_engine
-
-            self.tool_engine = get_tool_engine()
-            return self.tool_engine
-
-        except Exception:
-            return None
-
-    # ========================================================
+    # ==========================================================
     # STATS
-    # ========================================================
+    # ==========================================================
 
-    def stats(self) -> dict[str, Any]:
+    def stats(self) -> dict:
+
         return {
-            "engine": "CognitiveOrchestrator",
+            "engine": (
+                "CognitiveOrchestrator"
+            ),
             "version": self.VERSION,
-            "intent_engine": type(self.intent_engine).__name__,
-            "router": type(self.router).__name__,
-            "response_engine": type(self.response_engine).__name__,
+            "intent_engine": (
+                type(
+                    self.intent_engine
+                ).__name__
+            ),
+            "router": (
+                type(
+                    self.router
+                ).__name__
+            ),
+            "response_engine": (
+                type(
+                    self.response_engine
+                ).__name__
+            ),
             "tool_engine": (
-                type(self.tool_engine).__name__
-                if self.tool_engine is not None
-                else "lazy"
+                type(
+                    self.tool_engine
+                ).__name__
             ),
             "pipeline": [
                 "intent",
@@ -110,403 +134,384 @@ class CognitiveOrchestrator:
             "status": "READY",
         }
 
-    # ========================================================
-    # RESULT BUILDER
-    # ========================================================
+    # ==========================================================
+    # HANDLE
+    # ==========================================================
 
-    def _result(
+    def handle(
         self,
-        *,
-        handled: bool,
-        response: Optional[str],
-        route: str,
-        intent: str,
-        confidence: float,
-        metadata: Optional[dict[str, Any]] = None,
-        error: Optional[str] = None,
-    ) -> dict[str, Any]:
-
-        return {
-            "handled": handled,
-            "response": response,
-            "route": route,
-            "intent": intent,
-            "confidence": confidence,
-            "metadata": metadata or {},
-            "error": error,
-        }
-
-    # ========================================================
-    # TOOL EXECUTION
-    # ========================================================
-
-    def _execute_tool(
-        self,
-        route: str,
         message: str,
-        intent_result: dict[str, Any],
-        route_result: dict[str, Any],
-    ) -> dict[str, Any]:
+        location: Optional[dict] = None,
+    ) -> OrchestratorResult:
 
-        tool_engine = self._get_tool_engine()
+        text = str(
+            message or ""
+        ).strip()
 
-        if tool_engine is None:
-            return self._result(
-                handled=False,
-                response=None,
-                route=route,
-                intent=intent_result.get("intent", "general"),
-                confidence=float(
-                    intent_result.get("confidence", 0.5)
-                ),
-                metadata={
-                    **route_result.get("metadata", {}),
-                    "tool_execution": False,
-                    "tool_engine": "unavailable",
-                },
-                error="ToolEngine is unavailable.",
-            )
+        if not text:
 
-        try:
-            tool_result = tool_engine.execute(
-                route,
-                message,
-            )
-
-            # ToolResult is expected to expose to_dict().
-            if hasattr(tool_result, "to_dict"):
-                data = tool_result.to_dict()
-            elif isinstance(tool_result, dict):
-                data = tool_result
-            else:
-                data = {
-                    "success": True,
-                    "response": str(tool_result),
-                    "data": None,
-                    "error": None,
-                }
-
-            success = bool(data.get("success", False))
-            response = data.get("response")
-
-            metadata = {
-                **route_result.get("metadata", {}),
-                "tool_execution": True,
-                "tool": route,
-                "tool_success": success,
-                "tool_data": data.get("data"),
-            }
-
-            return self._result(
-                handled=success,
-                response=response,
-                route=route,
-                intent=intent_result.get("intent", "general"),
-                confidence=float(
-                    intent_result.get("confidence", 0.5)
-                ),
-                metadata=metadata,
-                error=data.get("error"),
-            )
-
-        except Exception as exc:
-            return self._result(
-                handled=False,
-                response=None,
-                route=route,
-                intent=intent_result.get("intent", "general"),
-                confidence=float(
-                    intent_result.get("confidence", 0.5)
-                ),
-                metadata={
-                    **route_result.get("metadata", {}),
-                    "tool_execution": True,
-                    "tool": route,
-                },
-                error=f"{type(exc).__name__}: {exc}",
-            )
-
-    # ========================================================
-    # MAIN HANDLE
-    # ========================================================
-
-    def handle(self, message: str) -> dict[str, Any]:
-        """
-        Execute the complete cognitive pipeline.
-        """
-
-        # ----------------------------------------------------
-        # INPUT VALIDATION
-        # ----------------------------------------------------
-
-        if message is None:
-            message = ""
-
-        if not isinstance(message, str):
-            message = str(message)
-
-        message = message.strip()
-
-        if not message:
-            return self._result(
+            return OrchestratorResult(
                 handled=True,
-                response="Silakan masukkan pesan.",
-                route="local",
-                intent="general",
-                confidence=1.0,
-                metadata={
-                    "fast_response": True,
-                    "empty_message": True,
-                    "orchestrator": self.VERSION,
-                },
-            )
-
-        # ----------------------------------------------------
-        # 1. INTENT
-        # ----------------------------------------------------
-
-        try:
-            intent_result = self.intent_engine.analyze(message)
-
-        except Exception as exc:
-            return self._result(
-                handled=False,
-                response=None,
-                route="error",
-                intent="general",
-                confidence=0.0,
-                metadata={
-                    "orchestrator": self.VERSION,
-                },
-                error=(
-                    f"IntentEngine error: "
-                    f"{type(exc).__name__}: {exc}"
+                response=(
+                    "Pesan kosong."
                 ),
+                route="local",
+                intent="empty",
+                confidence=1.0,
             )
-
-        intent = str(
-            intent_result.get("intent", "general")
-        )
-
-        confidence = float(
-            intent_result.get("confidence", 0.5)
-        )
-
-        normalized_text = intent_result.get(
-            "normalized_text",
-            message,
-        )
-
-        high_confidence = bool(
-            intent_result.get(
-                "high_confidence",
-                confidence >= 0.90,
-            )
-        )
-
-        # ----------------------------------------------------
-        # 2. ROUTING
-        # ----------------------------------------------------
 
         try:
-            route_result = self.router.route(
-                message,
-                intent_result,
+
+            # --------------------------------------------------
+            # INTENT
+            # --------------------------------------------------
+
+            intent_result = (
+                self.intent_engine.analyze(
+                    text
+                )
             )
 
-        except TypeError:
-            # Compatibility with older router API.
+            intent = str(
+                intent_result.get(
+                    "intent",
+                    "general",
+                )
+            )
+
+            confidence = float(
+                intent_result.get(
+                    "confidence",
+                    0.5,
+                )
+            )
+
+            normalized_text = (
+                intent_result.get(
+                    "normalized_text",
+                    text,
+                )
+            )
+
+            # --------------------------------------------------
+            # ROUTING
+            # --------------------------------------------------
+
             try:
-                route_result = self.router.route(
+
+                routing = self.router.route(
+                    text,
+                    intent_result,
+                )
+
+            except TypeError:
+
+                routing = self.router.route(
                     intent_result
                 )
-            except Exception as exc:
-                return self._result(
-                    handled=False,
-                    response=None,
-                    route="error",
-                    intent=intent,
-                    confidence=confidence,
-                    metadata={
-                        "orchestrator": self.VERSION,
-                        "normalized_text": normalized_text,
-                    },
-                    error=(
-                        f"Router error: "
-                        f"{type(exc).__name__}: {exc}"
-                    ),
-                )
 
-        except Exception as exc:
-            return self._result(
-                handled=False,
-                response=None,
-                route="error",
-                intent=intent,
-                confidence=confidence,
-                metadata={
-                    "orchestrator": self.VERSION,
-                    "normalized_text": normalized_text,
-                },
-                error=(
-                    f"Router error: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
+            route = str(
+                routing.get(
+                    "route",
+                    "llm",
+                )
             )
 
-        route = str(
-            route_result.get("route", "llm")
-        )
-
-        route_metadata = dict(
-            route_result.get("metadata", {})
-        )
-
-        # ----------------------------------------------------
-        # COMMON METADATA
-        # ----------------------------------------------------
-
-        base_metadata = {
-            **route_metadata,
-            "orchestrator": self.VERSION,
-            "normalized_text": normalized_text,
-            "intent_confidence": confidence,
-            "high_confidence": high_confidence,
-        }
-
-        # ----------------------------------------------------
-        # 3. LOCAL RESPONSE
-        # ----------------------------------------------------
-
-        if route in {
-            "local",
-            "memory",
-        }:
-            try:
-                response_result = self.response_engine.handle(
-                    intent,
-                    message,
+            metadata = dict(
+                routing.get(
+                    "metadata",
+                    {},
                 )
+            )
 
-                if hasattr(response_result, "to_dict"):
-                    data = response_result.to_dict()
-                elif isinstance(response_result, dict):
-                    data = response_result
-                else:
-                    data = {
-                        "handled": True,
-                        "response": str(response_result),
-                    }
-
-                metadata = {
-                    **base_metadata,
-                    **data.get("metadata", {}),
+            metadata.update(
+                {
+                    "orchestrator": (
+                        self.VERSION
+                    ),
+                    "normalized_text": (
+                        normalized_text
+                    ),
+                    "intent_confidence": (
+                        confidence
+                    ),
+                    "high_confidence": (
+                        confidence >= 0.90
+                    ),
                 }
+            )
 
-                return self._result(
-                    handled=bool(
-                        data.get("handled", True)
-                    ),
-                    response=data.get("response"),
-                    route=data.get(
-                        "route",
-                        route,
-                    ),
-                    intent=data.get(
-                        "intent",
+            # --------------------------------------------------
+            # LOCAL / MEMORY RESPONSE
+            # --------------------------------------------------
+
+            if route in {
+                "local",
+                "memory",
+            }:
+
+                result = (
+                    self.response_engine.handle(
                         intent,
-                    ),
-                    confidence=confidence,
-                    metadata=metadata,
-                    error=data.get("error"),
+                        text,
+                    )
                 )
 
-            except Exception as exc:
-                return self._result(
-                    handled=False,
-                    response=None,
+                response = (
+                    self._response_text(
+                        result
+                    )
+                )
+
+                if response:
+
+                    metadata.update(
+                        self._response_metadata(
+                            result
+                        )
+                    )
+
+                    return OrchestratorResult(
+                        handled=True,
+                        response=response,
+                        route=route,
+                        intent=intent,
+                        confidence=confidence,
+                        metadata=metadata,
+                    )
+
+            # --------------------------------------------------
+            # TOOL EXECUTION
+            # --------------------------------------------------
+
+            if route in {
+                "calculator",
+                "weather",
+                "search",
+            }:
+
+                tool_metadata = dict(
+                    metadata
+                )
+
+                if location:
+                    tool_metadata[
+                        "location"
+                    ] = location
+
+                tool_result = (
+                    self.tool_engine.execute(
+                        route,
+                        text,
+                        tool_metadata,
+                    )
+                )
+
+                metadata[
+                    "tool"
+                ] = tool_result.tool
+
+                metadata[
+                    "tool_success"
+                ] = tool_result.success
+
+                metadata[
+                    "tool_data"
+                ] = tool_result.data
+
+                if tool_result.success:
+
+                    return OrchestratorResult(
+                        handled=True,
+                        response=(
+                            tool_result.response
+                        ),
+                        route=route,
+                        intent=intent,
+                        confidence=confidence,
+                        metadata=metadata,
+                    )
+
+                # Tool gagal.
+                # Jangan crash.
+                # Kembalikan error terkontrol.
+
+                return OrchestratorResult(
+                    handled=True,
+                    response=self._tool_error_message(
+                        route,
+                        tool_result.error,
+                    ),
                     route=route,
                     intent=intent,
                     confidence=confidence,
-                    metadata=base_metadata,
-                    error=(
-                        f"ResponseEngine error: "
-                        f"{type(exc).__name__}: {exc}"
-                    ),
+                    metadata=metadata,
+                    error=tool_result.error,
                 )
 
-        # ----------------------------------------------------
-        # 4. TOOL EXECUTION
-        # ----------------------------------------------------
+            # --------------------------------------------------
+            # LLM
+            # --------------------------------------------------
 
-        if route in {
-            "calculator",
-            "weather",
-            "search",
-        }:
-            result = self._execute_tool(
-                route=route,
-                message=message,
-                intent_result=intent_result,
-                route_result={
-                    **route_result,
-                    "metadata": base_metadata,
-                },
-            )
+            if route == "llm":
 
-            return result
+                return OrchestratorResult(
+                    handled=False,
+                    response=None,
+                    route="llm",
+                    intent=intent,
+                    confidence=confidence,
+                    metadata=metadata,
+                )
 
-        # ----------------------------------------------------
-        # 5. LLM FALLBACK
-        # ----------------------------------------------------
+            # --------------------------------------------------
+            # FALLBACK
+            # --------------------------------------------------
 
-        if route == "llm":
-            return self._result(
+            return OrchestratorResult(
                 handled=False,
                 response=None,
                 route="llm",
                 intent=intent,
                 confidence=confidence,
                 metadata={
-                    **base_metadata,
-                    "requires_llm": True,
-                    "message": message,
+                    **metadata,
+                    "fallback": True,
                 },
             )
 
-        # ----------------------------------------------------
-        # 6. UNKNOWN ROUTE → SAFE LLM FALLBACK
-        # ----------------------------------------------------
+        except Exception as error:
 
-        return self._result(
-            handled=False,
-            response=None,
-            route="llm",
-            intent=intent,
-            confidence=confidence,
-            metadata={
-                **base_metadata,
-                "fallback": True,
-                "requires_llm": True,
-                "message": message,
-            },
-        )
+            return OrchestratorResult(
+                handled=False,
+                response=None,
+                route="error",
+                intent="error",
+                confidence=0.0,
+                metadata={
+                    "orchestrator": (
+                        self.VERSION
+                    ),
+                },
+                error=str(error),
+            )
 
+    # ==========================================================
+    # HELPERS
+    # ==========================================================
 
-# ============================================================
-# FACTORY
-# ============================================================
+    @staticmethod
+    def _response_text(
+        result: Any,
+    ) -> Optional[str]:
 
-def create_cognitive_orchestrator(
-    intent_engine,
-    router,
-    response_engine,
-    tool_engine=None,
-) -> CognitiveOrchestrator:
+        if result is None:
+            return None
 
-    return CognitiveOrchestrator(
-        intent_engine=intent_engine,
-        router=router,
-        response_engine=response_engine,
-        tool_engine=tool_engine,
-    )
+        if isinstance(
+            result,
+            str,
+        ):
+            return result
+
+        if hasattr(
+            result,
+            "response",
+        ):
+            return result.response
+
+        if isinstance(
+            result,
+            dict,
+        ):
+            return result.get(
+                "response"
+            )
+
+        return None
+
+    @staticmethod
+    def _response_metadata(
+        result: Any,
+    ) -> dict:
+
+        if result is None:
+            return {}
+
+        if isinstance(
+            result,
+            dict,
+        ):
+            metadata = result.get(
+                "metadata",
+                {},
+            )
+
+            return (
+                metadata
+                if isinstance(
+                    metadata,
+                    dict,
+                )
+                else {}
+            )
+
+        if hasattr(
+            result,
+            "metadata",
+        ):
+
+            metadata = result.metadata
+
+            return (
+                metadata
+                if isinstance(
+                    metadata,
+                    dict,
+                )
+                else {}
+            )
+
+        return {}
+
+    @staticmethod
+    def _tool_error_message(
+        route: str,
+        error: Optional[str],
+    ) -> str:
+
+        if route == "weather":
+
+            return (
+                "Saya belum bisa mendapatkan "
+                "data cuaca saat ini. "
+                + (
+                    error or ""
+                )
+            ).strip()
+
+        if route == "search":
+
+            return (
+                "Saya belum bisa mendapatkan "
+                "hasil pencarian saat ini. "
+                + (
+                    error or ""
+                )
+            ).strip()
+
+        if route == "calculator":
+
+            return (
+                "Perhitungannya gagal. "
+                + (
+                    error or ""
+                )
+            ).strip()
+
+        return (
+            "Tool gagal dijalankan. "
+            + (
+                error or ""
+            )
+        ).strip()

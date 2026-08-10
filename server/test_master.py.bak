@@ -1,0 +1,555 @@
+from __future__ import annotations
+
+import importlib
+import json
+import sys
+import traceback
+import urllib.request
+import urllib.error
+from pathlib import Path
+
+
+# ============================================================
+# ZAI MASTER SYSTEM TEST
+# Super ZAI Backend
+# ============================================================
+
+ROOT = Path(__file__).resolve().parents[1]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+TOTAL = 0
+PASS = 0
+FAIL = 0
+RESULTS: list[tuple[str, bool, str]] = []
+
+
+def test(name: str, fn):
+    global TOTAL, PASS, FAIL
+
+    TOTAL += 1
+
+    try:
+        result = fn()
+
+        if result is False:
+            raise AssertionError("Test returned False")
+
+        PASS += 1
+        RESULTS.append((name, True, "PASS"))
+        print(f"[PASS] {name}")
+
+    except Exception as exc:
+        FAIL += 1
+        message = f"{type(exc).__name__}: {exc}"
+        RESULTS.append((name, False, message))
+        print(f"[FAIL] {name}")
+        print(f"       {message}")
+
+
+def import_module(name: str):
+    return importlib.import_module(name)
+
+
+# ============================================================
+# 1. FOUNDATION
+# ============================================================
+
+def foundation_test():
+    modules = [
+        "intent.engine",
+        "intent.router",
+        "memory.database",
+        "memory.manager",
+        "response.engine",
+        "core.orchestrator",
+        "core.tool_engine",
+        "main",
+    ]
+
+    for module in modules:
+        import_module(module)
+
+    return True
+
+
+test("Foundation / Import seluruh engine", foundation_test)
+
+
+# ============================================================
+# 2. INTENT ENGINE
+# ============================================================
+
+def intent_test():
+    from intent.engine import get_intent_engine
+
+    engine = get_intent_engine()
+
+    assert engine is not None
+
+    cases = {
+        "halo zai": "greeting",
+        "siapa kamu": "identity",
+        "berapa memory": "memory_count",
+        "apa yang kamu ingat tentang saya": "memory_query",
+        "status zai": "status",
+        "help": "help",
+        "hitung 20 + 30": "calculation",
+        "cuaca hari ini": "weather",
+        "buatkan kode python": "coding",
+        "cari berita terbaru": "search",
+        "jelaskan artificial intelligence": "general",
+    }
+
+    for message, expected in cases.items():
+        result = engine.analyze(message)
+
+        assert isinstance(result, dict)
+        assert result.get("intent") == expected, (
+            f"{message!r}: expected {expected!r}, "
+            f"got {result.get('intent')!r}"
+        )
+
+    return True
+
+
+test("Intent Engine / seluruh intent utama", intent_test)
+
+
+# ============================================================
+# 3. MEMORY ENGINE
+# ============================================================
+
+def memory_test():
+    from memory.manager import MemoryManager
+
+    memory = MemoryManager()
+
+    assert memory.count() >= 0
+
+    stats = memory.stats()
+
+    assert isinstance(stats, dict)
+    assert stats.get("enabled") is True
+    assert stats.get("engine") == "MemoryManager"
+
+    category = memory.detect_category(
+        "Saya sedang membangun Super ZAI"
+    )
+
+    importance = memory.calculate_importance(
+        "Saya sedang membangun Super ZAI"
+    )
+
+    assert category
+    assert isinstance(importance, int)
+    assert 0 <= importance <= 10
+
+    context = memory.build_context("Super ZAI")
+
+    assert isinstance(context, str)
+
+    return True
+
+
+test("Memory Engine / database + manager", memory_test)
+
+
+# ============================================================
+# 4. INTENT ROUTER
+# ============================================================
+
+def router_test():
+    from intent.engine import get_intent_engine
+    from intent.router import IntentRouter
+    from memory.manager import MemoryManager
+
+    engine = get_intent_engine()
+    router = IntentRouter(MemoryManager())
+
+    cases = [
+        ("cuaca hari ini", "weather"),
+        ("hitung 20 + 30", "calculator"),
+        ("buatkan kode python", "llm"),
+        ("cari berita terbaru", "search"),
+        ("jelaskan artificial intelligence", "llm"),
+    ]
+
+    for message, expected_route in cases:
+        intent = engine.analyze(message)
+
+        result = router.route(message, intent)
+
+        assert isinstance(result, dict)
+        assert result.get("route") == expected_route, (
+            f"{message!r}: expected route "
+            f"{expected_route!r}, got {result.get('route')!r}"
+        )
+
+    return True
+
+
+test("Intent Router / seluruh route utama", router_test)
+
+
+# ============================================================
+# 5. RESPONSE ENGINE
+# ============================================================
+
+def response_test():
+    from memory.manager import MemoryManager
+    from response.engine import ResponseEngine
+
+    engine = ResponseEngine(MemoryManager())
+
+    cases = [
+        ("greeting", "halo zai"),
+        ("identity", "siapa kamu"),
+        ("memory_count", "berapa memory"),
+        ("memory_query", "apa yang kamu ingat tentang saya"),
+        ("status", "status zai"),
+        ("help", "help"),
+    ]
+
+    for intent, message in cases:
+        result = engine.handle(intent, message)
+
+        data = result.to_dict()
+
+        assert isinstance(data, dict)
+        assert data.get("handled") is True
+        assert isinstance(data.get("response"), str)
+        assert data.get("response").strip()
+
+    return True
+
+
+test("Response Engine / local responses", response_test)
+
+
+# ============================================================
+# 6. TOOL ENGINE
+# ============================================================
+
+def tool_engine_test():
+    from core.tool_engine import get_tool_engine
+
+    engine = get_tool_engine()
+
+    assert engine is not None
+
+    stats = engine.stats()
+
+    assert isinstance(stats, dict)
+    assert stats.get("engine") == "ToolEngine"
+
+    tools = stats.get("tools", [])
+
+    assert "calculator" in tools
+    assert "weather" in tools
+    assert "search" in tools
+
+    result = engine.execute(
+        "calculator",
+        "hitung 20 + 30"
+    )
+
+    data = result.to_dict()
+
+    assert data.get("success") is True
+    assert data.get("tool") == "calculator"
+    assert data.get("data", {}).get("result") == 50
+
+    result = engine.execute(
+        "calculator",
+        "hitung (20 + 30) * 2"
+    )
+
+    data = result.to_dict()
+
+    assert data.get("success") is True
+    assert data.get("data", {}).get("result") == 100
+
+    return True
+
+
+test("Tool Engine / calculator + weather + search", tool_engine_test)
+
+
+# ============================================================
+# 7. SECURITY
+# ============================================================
+
+def security_test():
+    from core.tool_engine import get_tool_engine
+
+    engine = get_tool_engine()
+
+    dangerous_inputs = [
+        'hitung __import__("os").system("whoami")',
+        'hitung open("x.txt")',
+        "hitung 2 ** 999999",
+        "hitung eval('2+2')",
+        "hitung exec('print(1)')",
+    ]
+
+    for message in dangerous_inputs:
+        result = engine.execute(
+            "calculator",
+            message
+        )
+
+        data = result.to_dict()
+
+        # Dangerous input must never successfully execute.
+        assert data.get("success") is False, (
+            f"Security failure: {message!r}"
+        )
+
+    return True
+
+
+test("Security / safe calculator", security_test)
+
+
+# ============================================================
+# 8. COGNITIVE ORCHESTRATOR
+# ============================================================
+
+def orchestrator_test():
+    from intent.engine import get_intent_engine
+    from intent.router import IntentRouter
+    from memory.manager import MemoryManager
+    from response.engine import ResponseEngine
+    from core.orchestrator import CognitiveOrchestrator
+
+    memory = MemoryManager()
+    intent = get_intent_engine()
+    router = IntentRouter(memory)
+    response = ResponseEngine(memory)
+
+    orchestrator = CognitiveOrchestrator(
+        intent,
+        router,
+        response,
+    )
+
+    stats = orchestrator.stats()
+
+    assert isinstance(stats, dict)
+    assert stats.get("engine") == "CognitiveOrchestrator"
+    assert stats.get("status") == "READY"
+
+    cases = [
+        ("halo zai", "local", "greeting"),
+        ("siapa kamu", "local", "identity"),
+        ("berapa memory", "memory", "memory_count"),
+        ("status zai", "local", "status"),
+        ("hitung 20 + 30", "calculator", "calculation"),
+        ("cuaca hari ini", "weather", "weather"),
+        ("buatkan kode python", "llm", "coding"),
+        ("cari berita terbaru", "search", "search"),
+        ("jelaskan artificial intelligence", "llm", "general"),
+    ]
+
+    for message, expected_route, expected_intent in cases:
+        result = orchestrator.handle(message)
+
+        assert isinstance(result, dict)
+
+        assert result.get("intent") == expected_intent, (
+            f"{message!r}: expected intent "
+            f"{expected_intent!r}, got {result.get('intent')!r}"
+        )
+
+        assert result.get("route") == expected_route, (
+            f"{message!r}: expected route "
+            f"{expected_route!r}, got {result.get('route')!r}"
+        )
+
+    return True
+
+
+test("Cognitive Orchestrator / full pipeline", orchestrator_test)
+
+
+# ============================================================
+# 9. MAIN / FASTAPI
+# ============================================================
+
+def api_import_test():
+    main = import_module("main")
+
+    assert hasattr(main, "app")
+
+    app = main.app
+
+    assert app is not None
+
+    return True
+
+
+test("FastAPI / application import", api_import_test)
+
+
+# ============================================================
+# 10. OLLAMA
+# ============================================================
+
+def ollama_test():
+    url = "http://127.0.0.1:11434/api/tags"
+
+    request = urllib.request.Request(
+        url,
+        method="GET",
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=5,
+    ) as response:
+
+        assert response.status == 200
+
+        raw = response.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        data = json.loads(raw)
+
+        assert isinstance(data, dict)
+
+        models = data.get("models", [])
+
+        assert isinstance(models, list)
+
+        model_names = [
+            str(model.get("name", ""))
+            for model in models
+            if isinstance(model, dict)
+        ]
+
+        assert any(
+            name.startswith("qwen3:8b")
+            for name in model_names
+        ), (
+            f"qwen3:8b tidak ditemukan. Models: {model_names}"
+        )
+
+    return True
+
+
+test("Ollama / qwen3:8b availability", ollama_test)
+
+
+# ============================================================
+# 11. END-TO-END COGNITIVE PIPELINE
+# ============================================================
+
+def end_to_end_test():
+    from intent.engine import get_intent_engine
+    from intent.router import IntentRouter
+    from memory.manager import MemoryManager
+    from response.engine import ResponseEngine
+    from core.orchestrator import CognitiveOrchestrator
+    from core.tool_engine import get_tool_engine
+
+    memory = MemoryManager()
+    intent = get_intent_engine()
+    router = IntentRouter(memory)
+    response = ResponseEngine(memory)
+    orchestrator = CognitiveOrchestrator(
+        intent,
+        router,
+        response,
+    )
+    tools = get_tool_engine()
+
+    # Local response
+    result = orchestrator.handle("halo zai")
+
+    assert result["handled"] is True
+    assert result["route"] == "local"
+
+    # Memory
+    result = orchestrator.handle("berapa memory")
+
+    assert result["handled"] is True
+    assert result["route"] == "memory"
+
+    # Calculator
+    result = orchestrator.handle("hitung 20 + 30")
+
+    assert result["route"] == "calculator"
+
+    calculator = tools.execute(
+        "calculator",
+        "hitung 20 + 30",
+    )
+
+    assert calculator.to_dict()["data"]["result"] == 50
+
+    # Weather routing
+    result = orchestrator.handle("cuaca hari ini")
+
+    assert result["route"] == "weather"
+
+    # Search routing
+    result = orchestrator.handle("cari berita terbaru")
+
+    assert result["route"] == "search"
+
+    # Coding -> LLM
+    result = orchestrator.handle(
+        "buatkan kode python"
+    )
+
+    assert result["route"] == "llm"
+    assert result["intent"] == "coding"
+
+    return True
+
+
+test("End-to-End / ZAI cognitive pipeline", end_to_end_test)
+
+
+# ============================================================
+# FINAL REPORT
+# ============================================================
+
+print()
+print("=" * 72)
+print("                         HASIL MASTER TEST")
+print("=" * 72)
+print(f"TOTAL TEST : {TOTAL}")
+print(f"PASS       : {PASS}")
+print(f"FAIL       : {FAIL}")
+print("=" * 72)
+
+if FAIL == 0:
+    print()
+    print("SUPER ZAI MASTER TEST: PASS")
+    print("STATUS: FOUNDATION READY")
+    print()
+    sys.exit(0)
+
+print()
+print("SUPER ZAI MASTER TEST: FAIL")
+print()
+print("DETAIL FAILURE:")
+print("-" * 72)
+
+for name, passed, message in RESULTS:
+    if not passed:
+        print(f"[FAIL] {name}")
+        print(f"       {message}")
+
+print("-" * 72)
+print()
+print("STATUS: NEED FIX")
+print()
+
+sys.exit(1)

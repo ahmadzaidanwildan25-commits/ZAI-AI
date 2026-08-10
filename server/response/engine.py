@@ -3,518 +3,328 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from memory.manager import MemoryManager
 
-# ============================================================
-# ZAI RESPONSE ENGINE
-# SUPER ZAI
-# VERSION 0.1.0
-# ============================================================
 
+# ==========================================================
+# RESPONSE RESULT
+# ==========================================================
 
 @dataclass
 class ResponseResult:
     """
-    Hasil keputusan Response Engine.
+    Standard result object dari ResponseEngine.
+
+    Mendukung:
+        result.to_dict()
+        result["response"]
+        result["handled"]
+        result["route"]
+        result["intent"]
+        result["metadata"]
     """
 
     handled: bool
-    response: Optional[str] = None
-    route: str = "llm"
-    intent: str = "general"
-    metadata: Optional[dict[str, Any]] = None
+    response: Optional[str]
+    route: str
+    intent: str
+    metadata: dict
+    error: Optional[str] = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict:
         return {
             "handled": self.handled,
             "response": self.response,
             "route": self.route,
             "intent": self.intent,
-            "metadata": self.metadata or {},
+            "metadata": self.metadata,
+            "error": self.error,
         }
 
+    def __getitem__(self, key: str) -> Any:
+        """
+        Compatibility layer agar object dapat digunakan
+        seperti dictionary oleh master test / orchestrator.
+        """
+        return self.to_dict()[key]
+
+    def get(
+        self,
+        key: str,
+        default: Any = None,
+    ) -> Any:
+        return self.to_dict().get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_dict()
+
+
+# ==========================================================
+# RESPONSE ENGINE
+# ==========================================================
 
 class ResponseEngine:
     """
-    Response Engine untuk Super ZAI.
+    Super ZAI Response Engine.
 
-    Tugas utama:
+    Bertugas menangani response lokal berlatensi rendah
+    sebelum request diteruskan ke LLM atau tool.
 
-    - Menangani intent sederhana tanpa LLM.
-    - Menghasilkan respons cepat.
-    - Menentukan apakah request harus diteruskan
-      ke LLM.
-    - Menjadi lapisan antara Intent Router dan Ollama.
+    Version:
+        1.1.0
     """
 
-    VERSION = "0.1.0"
+    VERSION = "1.1.0"
 
     def __init__(
         self,
-        memory_manager: Any = None,
-    ) -> None:
+        memory_manager: MemoryManager,
+    ):
+        self.memory = memory_manager
 
-        self.memory_manager = memory_manager
-
-    # ========================================================
-    # PUBLIC API
-    # ========================================================
+    # ======================================================
+    # MAIN
+    # ======================================================
 
     def handle(
         self,
         intent: str,
-        message: str = "",
-        context: Optional[dict[str, Any]] = None,
+        message: str,
     ) -> ResponseResult:
-        """
-        Memproses intent dan menentukan respons.
 
-        Returns:
-            ResponseResult
-        """
+        intent = str(
+            intent or "general"
+        ).strip().lower()
 
-        intent = self._normalize_intent(intent)
-        message = self._normalize_message(message)
+        text = str(
+            message or ""
+        ).strip()
 
-        context = context or {}
-
-        # ----------------------------------------------------
+        # --------------------------------------------------
         # GREETING
-        # ----------------------------------------------------
+        # --------------------------------------------------
 
         if intent == "greeting":
-            return self._greeting()
-
-        # ----------------------------------------------------
-        # IDENTITY
-        # ----------------------------------------------------
-
-        if intent == "identity":
-            return self._identity()
-
-        # ----------------------------------------------------
-        # MEMORY COUNT
-        # ----------------------------------------------------
-
-        if intent == "memory_count":
-            return self._memory_count()
-
-        # ----------------------------------------------------
-        # MEMORY QUERY
-        # ----------------------------------------------------
-
-        if intent == "memory_query":
-            return self._memory_query()
-
-        # ----------------------------------------------------
-        # MEMORY SAVE
-        # ----------------------------------------------------
-
-        if intent == "memory_save":
-            return ResponseResult(
-                handled=False,
-                response=None,
-                route="memory",
-                intent=intent,
-                metadata={
-                    "requires_memory_action": True,
-                },
-            )
-
-        # ----------------------------------------------------
-        # MEMORY DELETE
-        # ----------------------------------------------------
-
-        if intent == "memory_delete":
-            return ResponseResult(
-                handled=False,
-                response=None,
-                route="memory",
-                intent=intent,
-                metadata={
-                    "requires_memory_action": True,
-                },
-            )
-
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
-
-        if intent == "status":
-            return self._status(context)
-
-        # ----------------------------------------------------
-        # HELP
-        # ----------------------------------------------------
-
-        if intent == "help":
-            return self._help()
-
-        # ----------------------------------------------------
-        # CALCULATION
-        # ----------------------------------------------------
-
-        if intent == "calculation":
-            return ResponseResult(
-                handled=False,
-                response=None,
-                route="calculator",
-                intent=intent,
-                metadata={
-                    "requires_calculator": True,
-                    "message": message,
-                },
-            )
-
-        # ----------------------------------------------------
-        # WEATHER
-        # ----------------------------------------------------
-
-        if intent == "weather":
-            return ResponseResult(
-                handled=False,
-                response=None,
-                route="weather",
-                intent=intent,
-                metadata={
-                    "requires_weather": True,
-                    "message": message,
-                },
-            )
-
-        # ----------------------------------------------------
-        # CODING
-        # ----------------------------------------------------
-
-        if intent == "coding":
-            return self._llm(
-                intent=intent,
-                message=message,
-                mode="deep",
-            )
-
-        # ----------------------------------------------------
-        # SEARCH
-        # ----------------------------------------------------
-
-        if intent == "search":
-            return ResponseResult(
-                handled=False,
-                response=None,
-                route="search",
-                intent=intent,
-                metadata={
-                    "requires_search": True,
-                    "message": message,
-                },
-            )
-
-        # ----------------------------------------------------
-        # GENERAL
-        # ----------------------------------------------------
-
-        return self._llm(
-            intent=intent,
-            message=message,
-            mode="normal",
-        )
-
-    # ========================================================
-    # GREETING
-    # ========================================================
-
-    def _greeting(self) -> ResponseResult:
-
-        return ResponseResult(
-            handled=True,
-            response="Halo! Saya ZAI. Ada yang bisa saya bantu?",
-            route="local",
-            intent="greeting",
-            metadata={
-                "fast_response": True,
-            },
-        )
-
-    # ========================================================
-    # IDENTITY
-    # ========================================================
-
-    def _identity(self) -> ResponseResult:
-
-        return ResponseResult(
-            handled=True,
-            response=(
-                "Saya ZAI, intelligence core dari Super ZAI. "
-                "Saya dirancang sebagai asisten AI pribadi "
-                "yang dapat berkembang dengan memory, tools, "
-                "automation, dan berbagai kemampuan lainnya."
-            ),
-            route="local",
-            intent="identity",
-            metadata={
-                "fast_response": True,
-            },
-        )
-
-    # ========================================================
-    # MEMORY COUNT
-    # ========================================================
-
-    def _memory_count(self) -> ResponseResult:
-
-        count = 0
-
-        try:
-
-            if self.memory_manager is not None:
-
-                if hasattr(
-                    self.memory_manager,
-                    "count",
-                ):
-                    count = int(
-                        self.memory_manager.count()
-                    )
-
-                elif hasattr(
-                    self.memory_manager,
-                    "count_memories",
-                ):
-                    count = int(
-                        self.memory_manager.count_memories()
-                    )
-
-        except Exception:
-
-            count = 0
-
-        return ResponseResult(
-            handled=True,
-            response=(
-                f"Saat ini saya memiliki "
-                f"{count} memory tersimpan."
-            ),
-            route="memory",
-            intent="memory_count",
-            metadata={
-                "count": count,
-                "fast_response": True,
-            },
-        )
-
-    def _memory_query(self) -> ResponseResult:
-
-        memories = []
-
-        try:
-
-            if self.memory_manager is not None:
-
-                if hasattr(
-                    self.memory_manager,
-                    "get_important_memories",
-                ):
-                    memories = (
-                        self.memory_manager
-                        .get_important_memories(
-                            limit=10
-                        )
-                    )
-
-                elif hasattr(
-                    self.memory_manager,
-                    "important",
-                ):
-                    memories = (
-                        self.memory_manager
-                        .important(
-                            limit=10
-                        )
-                    )
-
-        except Exception:
-
-            memories = []
-
-        if not memories:
 
             return ResponseResult(
                 handled=True,
                 response=(
-                    "Saat ini belum ada memory penting "
-                    "yang bisa saya tampilkan."
+                    "Halo! Saya ZAI. "
+                    "Ada yang bisa saya bantu?"
                 ),
-                route="memory",
-                intent="memory_query",
+                route="local",
+                intent=intent,
                 metadata={
-                    "count": 0,
                     "fast_response": True,
                 },
             )
 
-        lines = [
-            "Berikut beberapa hal yang saya ingat:"
-        ]
+        # --------------------------------------------------
+        # IDENTITY
+        # --------------------------------------------------
 
-        for item in memories:
-
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
-
-            key = str(
-                item.get(
-                    "key",
-                    "",
-                )
-            ).strip()
-
-            value = str(
-                item.get(
-                    "value",
-                    "",
-                )
-            ).strip()
-
-            if key and value:
-
-                if key.lower() == value.lower():
-
-                    lines.append(
-                        f"- {value}"
-                    )
-
-                else:
-
-                    lines.append(
-                        f"- {key}: {value}"
-                    )
-
-        if len(lines) == 1:
+        if intent == "identity":
 
             return ResponseResult(
                 handled=True,
                 response=(
-                    "Saya belum menemukan memory "
-                    "yang bisa ditampilkan."
+                    "Saya ZAI, intelligence core "
+                    "dari Super ZAI. Saya dirancang "
+                    "sebagai asisten AI pribadi yang "
+                    "dapat berkembang dengan memory, "
+                    "tools, automation, dan berbagai "
+                    "kemampuan lainnya."
                 ),
-                route="memory",
-                intent="memory_query",
+                route="local",
+                intent=intent,
+                metadata={
+                    "fast_response": True,
+                },
             )
 
-        return ResponseResult(
-            handled=True,
-            response="\n".join(lines),
-            route="memory",
-            intent="memory_query",
-            metadata={
-                "count": len(lines) - 1,
-                "fast_response": True,
-            },
-        )
+        # --------------------------------------------------
+        # STATUS
+        # --------------------------------------------------
 
-    # ========================================================
-    # STATUS
-    # ========================================================
+        if intent == "status":
 
-    def _status(
-        self,
-        context: dict[str, Any],
-    ) -> ResponseResult:
+            return ResponseResult(
+                handled=True,
+                response=(
+                    "ZAI sedang online.\n"
+                    "Status: ONLINE\n"
+                    "Model: qwen3:8b\n"
+                    "Ollama: ONLINE\n"
+                    "Memory: ENABLED\n"
+                    "Streaming: ENABLED\n"
+                    "Tool Engine: ENABLED"
+                ),
+                route="local",
+                intent=intent,
+                metadata={
+                    "fast_response": True,
+                    "status": "ONLINE",
+                    "model": "qwen3:8b",
+                },
+            )
 
-        model = context.get(
-            "model",
-            "qwen3:8b",
-        )
+        # --------------------------------------------------
+        # HELP
+        # --------------------------------------------------
 
-        memory_enabled = context.get(
-            "memory",
-            True,
-        )
+        if intent == "help":
 
-        streaming = context.get(
-            "streaming",
-            True,
-        )
+            return ResponseResult(
+                handled=True,
+                response=(
+                    "Saya bisa membantu dengan:\n\n"
+                    "- Percakapan dan pertanyaan umum\n"
+                    "- Memory jangka panjang\n"
+                    "- Perhitungan\n"
+                    "- Cuaca\n"
+                    "- Pencarian informasi\n"
+                    "- Coding\n"
+                    "- Analisis\n"
+                    "- Status sistem ZAI\n"
+                    "- Tool execution\n\n"
+                    "Contoh:\n"
+                    '"ingat saya sedang membangun Super ZAI"\n'
+                    '"berapa memory"\n'
+                    '"status zai"\n'
+                    '"hitung 20 + 30"\n'
+                    '"cuaca Jakarta"\n'
+                    '"cari berita terbaru tentang AI"'
+                ),
+                route="local",
+                intent=intent,
+                metadata={
+                    "fast_response": True,
+                },
+            )
 
-        ollama = context.get(
-            "ollama",
-            True,
-        )
+        # --------------------------------------------------
+        # MEMORY COUNT
+        # --------------------------------------------------
 
-        status = context.get(
-            "status",
-            "ONLINE",
-        )
+        if intent == "memory_count":
 
-        response = (
-            "ZAI sedang online.\n"
-            f"Status: {status}\n"
-            f"Model: {model}\n"
-            f"Ollama: "
-            f"{'ONLINE' if ollama else 'OFFLINE'}\n"
-            f"Memory: "
-            f"{'ENABLED' if memory_enabled else 'DISABLED'}\n"
-            f"Streaming: "
-            f"{'ENABLED' if streaming else 'DISABLED'}"
-        )
+            try:
+                count = self.memory.count()
 
-        return ResponseResult(
-            handled=True,
-            response=response,
-            route="local",
-            intent="status",
-            metadata={
-                "fast_response": True,
-                "status": status,
-                "model": model,
-            },
-        )
+            except Exception as error:
 
-    # ========================================================
-    # HELP
-    # ========================================================
+                return ResponseResult(
+                    handled=False,
+                    response=None,
+                    route="memory",
+                    intent=intent,
+                    metadata={
+                        "fast_response": False,
+                    },
+                    error=(
+                        f"Memory count gagal: {error}"
+                    ),
+                )
 
-    def _help(self) -> ResponseResult:
+            return ResponseResult(
+                handled=True,
+                response=(
+                    f"Saat ini saya memiliki "
+                    f"{count} memory tersimpan."
+                ),
+                route="memory",
+                intent=intent,
+                metadata={
+                    "count": count,
+                    "fast_response": True,
+                },
+            )
 
-        response = (
-            "Saya bisa membantu dengan:\n\n"
-            "- Percakapan dan pertanyaan umum\n"
-            "- Memory jangka panjang\n"
-            "- Perhitungan\n"
-            "- Cuaca\n"
-            "- Coding\n"
-            "- Pencarian informasi\n"
-            "- Analisis dan penjelasan\n"
-            "- Status sistem ZAI\n\n"
-            "Contoh:\n"
-            "\"ingat saya sedang membangun Super ZAI\"\n"
-            "\"berapa memory\"\n"
-            "\"status zai\"\n"
-            "\"hitung 20 + 30\""
-        )
+        # --------------------------------------------------
+        # MEMORY QUERY
+        # --------------------------------------------------
 
-        return ResponseResult(
-            handled=True,
-            response=response,
-            route="local",
-            intent="help",
-            metadata={
-                "fast_response": True,
-            },
-        )
+        if intent == "memory_query":
 
-    # ========================================================
-    # LLM ROUTE
-    # ========================================================
+            try:
+                memories = self.memory.query(
+                    text
+                )
 
-    def _llm(
-        self,
-        intent: str,
-        message: str,
-        mode: str,
-    ) -> ResponseResult:
+            except Exception as error:
+
+                return ResponseResult(
+                    handled=False,
+                    response=None,
+                    route="memory",
+                    intent=intent,
+                    metadata={
+                        "fast_response": False,
+                    },
+                    error=(
+                        f"Memory query gagal: {error}"
+                    ),
+                )
+
+            if not memories:
+
+                return ResponseResult(
+                    handled=True,
+                    response=(
+                        "Saat ini belum ada "
+                        "memory penting yang bisa "
+                        "saya tampilkan."
+                    ),
+                    route="memory",
+                    intent=intent,
+                    metadata={
+                        "count": 0,
+                        "fast_response": True,
+                    },
+                )
+
+            lines = [
+                "Berikut beberapa hal "
+                "yang saya ingat:"
+            ]
+
+            for item in memories[:10]:
+
+                if isinstance(item, dict):
+
+                    value = item.get(
+                        "value",
+                        item.get(
+                            "key",
+                            "",
+                        ),
+                    )
+
+                else:
+
+                    value = str(item)
+
+                if value:
+                    lines.append(
+                        f"- {value}"
+                    )
+
+            return ResponseResult(
+                handled=True,
+                response="\n".join(
+                    lines
+                ),
+                route="memory",
+                intent=intent,
+                metadata={
+                    "count": len(memories),
+                    "fast_response": True,
+                },
+            )
+
+        # --------------------------------------------------
+        # GENERAL / UNKNOWN
+        # --------------------------------------------------
 
         return ResponseResult(
             handled=False,
@@ -522,90 +332,72 @@ class ResponseEngine:
             route="llm",
             intent=intent,
             metadata={
-                "mode": mode,
-                "message": message,
                 "requires_llm": True,
+                "message": text,
             },
         )
 
-    # ========================================================
-    # NORMALIZATION
-    # ========================================================
+    # ======================================================
+    # STATUS
+    # ======================================================
 
-    @staticmethod
-    def _normalize_intent(
-        intent: str,
-    ) -> str:
+    def stats(self) -> dict:
 
-        if not intent:
-            return "general"
-
-        return (
-            str(intent)
-            .strip()
-            .lower()
-        )
-
-    @staticmethod
-    def _normalize_message(
-        message: str,
-    ) -> str:
-
-        if not message:
-            return ""
-
-        return " ".join(
-            str(message)
-            .strip()
-            .split()
-        )
-
-    # ========================================================
-    # VERSION
-    # ========================================================
-
-    @classmethod
-    def version(cls) -> str:
-
-        return cls.VERSION
+        return {
+            "engine": "ResponseEngine",
+            "version": self.VERSION,
+            "memory": self.memory is not None,
+            "local_responses": True,
+            "status": "READY",
+        }
 
 
-# ============================================================
+# ==========================================================
 # SINGLETON
-# ============================================================
+# ==========================================================
 
 _response_engine: Optional[ResponseEngine] = None
 
 
 def get_response_engine(
-    memory_manager: Any = None,
+    memory_manager: Optional[MemoryManager] = None,
 ) -> ResponseEngine:
+    """
+    Global ResponseEngine factory.
+
+    Bisa dipanggil dengan:
+
+        get_response_engine()
+
+    atau:
+
+        get_response_engine(memory_manager)
+    """
 
     global _response_engine
 
     if _response_engine is None:
 
+        if memory_manager is None:
+            memory_manager = MemoryManager()
+
         _response_engine = ResponseEngine(
-            memory_manager=memory_manager
-        )
-
-    elif (
-        memory_manager is not None
-        and _response_engine.memory_manager is None
-    ):
-
-        _response_engine.memory_manager = (
             memory_manager
         )
 
     return _response_engine
 
 
-# ============================================================
+# ==========================================================
 # RESET
-# ============================================================
+# ==========================================================
 
 def reset_response_engine() -> None:
+    """
+    Reset singleton ResponseEngine.
+
+    Berguna untuk testing.
+    """
 
     global _response_engine
 
