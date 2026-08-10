@@ -7,15 +7,16 @@ import httpx
 import json
 import time
 import asyncio
-
+from memory.database import initialize_database
+from memory.manager import MemoryManager
 
 # ============================================================
-# ZAI SERVER
-# SUPER ZAI - HIGH SPEED AI CORE
+# SUPER ZAI
+# INTELLIGENCE CORE + ROUTER
 # ============================================================
 
 APP_NAME = "ZAI"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_URL}/api/chat"
@@ -23,36 +24,30 @@ OLLAMA_GENERATE_URL = f"{OLLAMA_URL}/api/generate"
 
 MODEL = "qwen3:8b"
 
-# Keep model loaded in memory.
-# -1 = keep loaded indefinitely.
+# Keep model loaded in RAM.
 KEEP_ALIVE = -1
+
 
 # ============================================================
 # SPEED CONFIGURATION
 # ============================================================
 
-# Jangan biarkan history terlalu panjang.
-# History panjang = prompt semakin besar = response semakin lambat.
 MAX_HISTORY = 8
-
-# Batas karakter setiap message history.
 MAX_HISTORY_CHARS = 3000
-
-# Batas karakter pesan user.
 MAX_MESSAGE_CHARS = 12000
 
-# HTTP timeout.
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = None
+
 
 # ============================================================
 # FASTAPI
 # ============================================================
 
 app = FastAPI(
-    title="ZAI AI Core",
+    title="Super ZAI AI Core",
     version=APP_VERSION,
-    description="High-speed local AI backend for Super ZAI.",
+    description="Super ZAI local intelligence core.",
 )
 
 
@@ -89,25 +84,39 @@ class ChatRequest(BaseModel):
 # ============================================================
 
 SYSTEM_PROMPT = """
-You are ZAI, a fast and capable personal AI assistant.
+You are ZAI, a highly capable personal AI assistant.
+
+Your name is ZAI.
 
 Core behavior:
-- Answer directly.
+
+- Answer the user's actual question.
 - Be accurate and useful.
-- Understand the user's intent.
-- Do not reveal hidden reasoning.
-- Do not unnecessarily over-explain.
-- Keep simple answers short.
-- For complex tasks, provide the necessary detail.
-- Respond naturally in the user's language.
-- Prioritize speed without sacrificing important information.
+- Respond naturally.
+- Respond in the user's language.
+- Keep simple answers concise.
+- Give more detail when the task requires it.
+- Never expose hidden chain-of-thought or private reasoning.
+- Do not claim that a tool was used when it was not used.
+- Do not invent current information.
+- Prioritize speed for simple requests.
+- For complex requests, provide a complete and useful answer.
 
 You are the intelligence core of Super ZAI.
-Future capabilities may include:
-memory, web, files, computer control, automation,
-voice, devices, agents, projects, and knowledge.
 
-For now, use the available local model.
+Your architecture can eventually contain:
+- memory
+- web
+- files
+- computer control
+- automation
+- voice
+- devices
+- agents
+- projects
+- knowledge
+
+At this stage, the local Qwen model is the primary reasoning engine.
 """.strip()
 
 
@@ -116,11 +125,13 @@ For now, use the available local model.
 # ============================================================
 
 client: Optional[httpx.AsyncClient] = None
-
+memory_manager = MemoryManager()
 
 @app.on_event("startup")
 async def startup_event():
     global client
+
+    initialize_database()
 
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(
@@ -141,16 +152,14 @@ async def startup_event():
     print(f"Version : {APP_VERSION}")
     print(f"Model   : {MODEL}")
     print(f"Ollama  : {OLLAMA_URL}")
+    print("Memory  : ENABLED")
     print("Stream  : ENABLED")
     print("Think   : DISABLED")
     print("Keep    : INFINITE")
     print("Status  : SERVER READY")
     print("=" * 64)
 
-    # Warmup dijalankan di background.
-    # Server tidak perlu menunggu warmup selesai.
     asyncio.create_task(background_warmup())
-
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -167,26 +176,166 @@ async def shutdown_event():
 
 def get_client() -> httpx.AsyncClient:
     if client is None:
-        raise RuntimeError("HTTP client is not initialized.")
+        raise RuntimeError(
+            "HTTP client is not initialized."
+        )
 
     return client
 
 
 # ============================================================
-# MODE
+# MODE NORMALIZATION
 # ============================================================
 
 def normalize_mode(mode: Optional[str]) -> str:
+
     if not mode:
         return "auto"
 
     mode = mode.lower().strip()
 
-    if mode not in {"auto", "fast", "normal", "deep"}:
+    allowed_modes = {
+        "auto",
+        "fast",
+        "normal",
+        "deep",
+    }
+
+    if mode not in allowed_modes:
         return "auto"
 
     return mode
 
+
+# ============================================================
+# INTELLIGENCE ROUTER
+# ============================================================
+
+def route_intent(message: str) -> str:
+    """
+    Determine which ZAI capability should handle the request.
+
+    Current capabilities:
+        chat
+        web
+        memory
+        agent
+        coding
+    """
+
+    text = message.lower().strip()
+
+    # --------------------------------------------------------
+    # WEB
+    # --------------------------------------------------------
+
+    web_patterns = [
+        "sekarang",
+        "saat ini",
+        "hari ini",
+        "terbaru",
+        "terkini",
+        "latest",
+        "berita",
+        "news",
+        "harga hari ini",
+        "cuaca",
+        "presiden",
+        "siapa yang menjabat",
+        "jadwal hari ini",
+        "informasi terbaru",
+    ]
+
+    for pattern in web_patterns:
+        if pattern in text:
+            return "web"
+
+    # --------------------------------------------------------
+    # MEMORY
+    # --------------------------------------------------------
+
+    memory_patterns = [
+        "ingat ini",
+        "ingat bahwa",
+        "ingat kalau",
+        "simpan ini",
+        "simpan bahwa",
+        "catat ini",
+        "jangan lupa",
+        "apa yang kamu ingat",
+        "kamu ingat",
+        "ingat nama saya",
+        "ingat saya",
+    ]
+
+    for pattern in memory_patterns:
+        if pattern in text:
+            return "memory"
+
+    # --------------------------------------------------------
+    # AGENT
+    # --------------------------------------------------------
+
+    agent_patterns = [
+        "jalankan",
+        "eksekusi",
+        "buka aplikasi",
+        "buka program",
+        "buat file lalu",
+        "buat project lalu",
+        "perbaiki lalu jalankan",
+        "kerjakan semuanya",
+        "lakukan semuanya",
+        "otomatis",
+        "automatically",
+        "selesaikan sampai selesai",
+    ]
+
+    for pattern in agent_patterns:
+        if pattern in text:
+            return "agent"
+
+    # --------------------------------------------------------
+    # CODING
+    # --------------------------------------------------------
+
+    coding_patterns = [
+        "coding",
+        "kode",
+        "program",
+        "flutter",
+        "dart",
+        "python",
+        "fastapi",
+        "javascript",
+        "typescript",
+        "html",
+        "css",
+        "api",
+        "debug",
+        "debugging",
+        "error coding",
+        "buat aplikasi",
+        "buat sistem",
+        "buat program",
+        "full code",
+        "kode lengkap",
+    ]
+
+    for pattern in coding_patterns:
+        if pattern in text:
+            return "coding"
+
+    # --------------------------------------------------------
+    # DEFAULT
+    # --------------------------------------------------------
+
+    return "chat"
+
+
+# ============================================================
+# MODE DETECTION
+# ============================================================
 
 def detect_mode(
     message: str,
@@ -199,7 +348,7 @@ def detect_mode(
     text = message.lower().strip()
 
     # --------------------------------------------------------
-    # VERY SHORT / SIMPLE REQUEST
+    # FAST
     # --------------------------------------------------------
 
     fast_exact = {
@@ -226,10 +375,6 @@ def detect_mode(
     if text in fast_exact:
         return "fast"
 
-    # --------------------------------------------------------
-    # SPEED KEYWORDS
-    # --------------------------------------------------------
-
     fast_keywords = [
         "jawab singkat",
         "singkat saja",
@@ -248,7 +393,7 @@ def detect_mode(
             return "fast"
 
     # --------------------------------------------------------
-    # DEEP TASKS
+    # DEEP
     # --------------------------------------------------------
 
     deep_keywords = [
@@ -256,8 +401,6 @@ def detect_mode(
         "analisa mendalam",
         "bandingkan secara detail",
         "buat arsitektur",
-        "debug",
-        "debugging",
         "jelaskan secara mendalam",
         "riset",
         "research",
@@ -269,15 +412,12 @@ def detect_mode(
         "dari awal sampai akhir",
         "production",
         "production ready",
+        "debug project",
     ]
 
     for keyword in deep_keywords:
         if keyword in text:
             return "deep"
-
-    # --------------------------------------------------------
-    # NORMAL
-    # --------------------------------------------------------
 
     return "normal"
 
@@ -287,8 +427,8 @@ def detect_mode(
 # ============================================================
 
 def select_options(mode: str) -> dict:
-    # FAST:
-    # Output pendek supaya token generation cepat.
+
+    # FAST
     if mode == "fast":
         return {
             "temperature": 0.15,
@@ -296,8 +436,7 @@ def select_options(mode: str) -> dict:
             "num_predict": 96,
         }
 
-    # NORMAL:
-    # Default ZAI.
+    # NORMAL
     if mode == "normal":
         return {
             "temperature": 0.25,
@@ -305,48 +444,75 @@ def select_options(mode: str) -> dict:
             "num_predict": 512,
         }
 
-    # DEEP:
-    # Dipakai hanya untuk pekerjaan berat.
+    # DEEP
     if mode == "deep":
         return {
             "temperature": 0.35,
-            "top_p": 0.9,
+            "top_p": 0.90,
             "num_predict": 1536,
         }
 
-    # Default fallback.
+    # FALLBACK
     return {
         "temperature": 0.25,
         "top_p": 0.85,
         "num_predict": 512,
     }
 
+@app.get("/memory")
+async def memory_status():
+
+    return {
+        "enabled": True,
+        "total_memories": memory_manager.count(),
+    }
+@app.get("/memory/list")
+async def memory_list():
+
+    return {
+        "success": True,
+        "memories": memory_manager.important(
+            limit=50
+        ),
+    }
+@app.get("/memory/search")
+async def memory_search(
+    q: str,
+):
+
+    return {
+        "success": True,
+        "query": q,
+        "memories": memory_manager.search(
+            q,
+            limit=10,
+        ),
+    }
+
 # ============================================================
 # HISTORY
 # ============================================================
+def build_messages(user_message, memory_context=None, history=None):
+    messages = []
 
-def build_messages(
-    user_message: str,
-    history: Optional[list[Message]],
-) -> list[dict]:
-
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        }
-    ]
+    if memory_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": memory_context,
+            }
+        )
 
     if history:
-
-        # Ambil hanya history terbaru.
         recent_history = history[-MAX_HISTORY:]
 
         for item in recent_history:
-
             role = item.role.lower().strip()
 
-            if role not in {"user", "assistant"}:
+            if role not in {
+                "user",
+                "assistant",
+            }:
                 continue
 
             content = item.content.strip()
@@ -354,7 +520,6 @@ def build_messages(
             if not content:
                 continue
 
-            # Batasi ukuran history.
             if len(content) > MAX_HISTORY_CHARS:
                 content = content[:MAX_HISTORY_CHARS]
 
@@ -378,7 +543,6 @@ def build_messages(
     )
 
     return messages
-
 
 # ============================================================
 # WARMUP
@@ -406,7 +570,10 @@ async def perform_warmup() -> dict:
         )
 
         latency_ms = round(
-            (time.perf_counter() - started) * 1000,
+            (
+                time.perf_counter()
+                - started
+            ) * 1000,
             2,
         )
 
@@ -427,7 +594,6 @@ async def perform_warmup() -> dict:
 
 async def background_warmup():
 
-    # Beri waktu server selesai startup.
     await asyncio.sleep(0.5)
 
     try:
@@ -462,6 +628,7 @@ async def root():
         "streaming": True,
         "thinking": False,
         "keep_alive": True,
+        "router": True,
     }
 
 
@@ -495,7 +662,10 @@ async def health():
         )
 
         latency_ms = round(
-            (time.perf_counter() - started) * 1000,
+            (
+                time.perf_counter()
+                - started
+            ) * 1000,
             2,
         )
 
@@ -511,13 +681,20 @@ async def health():
 
         models = [
             item.get("name")
-            for item in data.get("models", [])
+            for item in data.get(
+                "models",
+                [],
+            )
         ]
 
         model_available = MODEL in models
 
         return {
-            "status": "ONLINE" if model_available else "DEGRADED",
+            "status": (
+                "ONLINE"
+                if model_available
+                else "DEGRADED"
+            ),
             "ollama": True,
             "model": MODEL,
             "model_available": model_available,
@@ -544,6 +721,41 @@ async def warmup():
 
 
 # ============================================================
+# ROUTER TEST
+# ============================================================
+
+@app.get("/route")
+async def route(message: str):
+
+    clean_message = message.strip()
+
+    if not clean_message:
+
+        return {
+            "success": False,
+            "error": "Message cannot be empty.",
+        }
+
+    requested_mode = normalize_mode("auto")
+
+    mode = detect_mode(
+        clean_message,
+        requested_mode,
+    )
+
+    intent = route_intent(
+        clean_message
+    )
+
+    return {
+        "success": True,
+        "message": clean_message,
+        "intent": intent,
+        "mode": mode,
+    }
+
+
+# ============================================================
 # OLLAMA STREAM
 # ============================================================
 
@@ -552,10 +764,6 @@ async def ollama_stream(
     history: Optional[list[Message]],
     requested_mode: str,
 ):
-
-    # --------------------------------------------------------
-    # MODE
-    # --------------------------------------------------------
 
     normalized_mode = normalize_mode(
         requested_mode
@@ -566,32 +774,23 @@ async def ollama_stream(
         normalized_mode,
     )
 
-    options = select_options(mode)
+    intent = route_intent(
+        user_message
+    )
 
-    # --------------------------------------------------------
-    # MESSAGES
-    # --------------------------------------------------------
+    options = select_options(mode)
 
     messages = build_messages(
         user_message,
         history,
     )
 
-    # --------------------------------------------------------
-    # OLLAMA PAYLOAD
-    # --------------------------------------------------------
-
     payload = {
         "model": MODEL,
         "messages": messages,
         "stream": True,
-
-        # Keep model in memory.
         "keep_alive": KEEP_ALIVE,
-
-        # Qwen3 thinking disabled.
         "think": False,
-
         "options": options,
     }
 
@@ -607,10 +806,6 @@ async def ollama_stream(
             OLLAMA_CHAT_URL,
             json=payload,
         ) as response:
-
-            # ------------------------------------------------
-            # HTTP ERROR
-            # ------------------------------------------------
 
             if response.status_code != 200:
 
@@ -634,10 +829,6 @@ async def ollama_stream(
 
                 return
 
-            # ------------------------------------------------
-            # STREAM
-            # ------------------------------------------------
-
             async for line in response.aiter_lines():
 
                 if not line:
@@ -651,10 +842,6 @@ async def ollama_stream(
 
                     continue
 
-                # ------------------------------------------------
-                # MESSAGE
-                # ------------------------------------------------
-
                 message_data = data.get(
                     "message",
                     {},
@@ -664,10 +851,6 @@ async def ollama_stream(
                     "content",
                     "",
                 )
-
-                # ------------------------------------------------
-                # FIRST TOKEN
-                # ------------------------------------------------
 
                 if content:
 
@@ -683,8 +866,7 @@ async def ollama_stream(
                             (
                                 first_token_time
                                 - started
-                            )
-                            * 1000,
+                            ) * 1000,
                             2,
                         )
 
@@ -692,6 +874,7 @@ async def ollama_stream(
                             json.dumps(
                                 {
                                     "type": "start",
+                                    "intent": intent,
                                     "mode": mode,
                                     "latency_ms": (
                                         first_token_latency_ms
@@ -701,10 +884,6 @@ async def ollama_stream(
                             )
                             + "\n"
                         )
-
-                    # ----------------------------------------
-                    # TOKEN
-                    # ----------------------------------------
 
                     yield (
                         json.dumps(
@@ -717,18 +896,13 @@ async def ollama_stream(
                         + "\n"
                     )
 
-                # ------------------------------------------------
-                # DONE
-                # ------------------------------------------------
-
                 if data.get("done"):
 
                     total_latency_ms = round(
                         (
                             time.perf_counter()
                             - started
-                        )
-                        * 1000,
+                        ) * 1000,
                         2,
                     )
 
@@ -736,6 +910,7 @@ async def ollama_stream(
                         json.dumps(
                             {
                                 "type": "done",
+                                "intent": intent,
                                 "mode": mode,
                                 "total_latency_ms": (
                                     total_latency_ms
@@ -750,10 +925,6 @@ async def ollama_stream(
 
                     break
 
-    # ========================================================
-    # ERRORS
-    # ========================================================
-
     except httpx.ConnectError:
 
         yield (
@@ -761,8 +932,9 @@ async def ollama_stream(
                 {
                     "type": "error",
                     "message": (
-                        "Tidak dapat terhubung ke Ollama "
-                        "di 127.0.0.1:11434."
+                        "Tidak dapat terhubung "
+                        "ke Ollama di "
+                        "127.0.0.1:11434."
                     ),
                 },
                 ensure_ascii=False,
@@ -777,8 +949,9 @@ async def ollama_stream(
                 {
                     "type": "error",
                     "message": (
-                        "Ollama membutuhkan waktu terlalu lama "
-                        "untuk memberikan respons."
+                        "Ollama membutuhkan waktu "
+                        "terlalu lama untuk memberikan "
+                        "respons."
                     ),
                 },
                 ensure_ascii=False,
@@ -788,7 +961,6 @@ async def ollama_stream(
 
     except asyncio.CancelledError:
 
-        # User/client membatalkan stream.
         raise
 
     except Exception as error:
@@ -825,7 +997,9 @@ async def chat(request: ChatRequest):
         ollama_stream(
             user_message=message,
             history=request.history,
-            requested_mode=request.mode or "auto",
+            requested_mode=(
+                request.mode or "auto"
+            ),
         ),
         media_type="application/x-ndjson",
         headers={
@@ -845,17 +1019,19 @@ async def speed():
 
     return {
         "service": APP_NAME,
+        "version": APP_VERSION,
         "model": MODEL,
         "streaming": True,
         "thinking": False,
         "keep_alive": True,
+        "router": True,
         "max_history": MAX_HISTORY,
         "modes": {
             "fast": {
-                "num_predict": 256,
+                "num_predict": 96,
             },
             "normal": {
-                "num_predict": 768,
+                "num_predict": 512,
             },
             "deep": {
                 "num_predict": 1536,
@@ -879,6 +1055,14 @@ async def info():
         "streaming": True,
         "thinking": False,
         "keep_alive": KEEP_ALIVE,
+        "router": True,
+        "capabilities": [
+            "chat",
+            "web",
+            "memory",
+            "coding",
+            "agent",
+        ],
         "max_history": MAX_HISTORY,
         "max_history_chars": MAX_HISTORY_CHARS,
         "max_message_chars": MAX_MESSAGE_CHARS,
