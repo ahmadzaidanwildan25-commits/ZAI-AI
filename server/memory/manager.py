@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import re
 from typing import Optional
 
 from .database import (
     count_memories,
     delete_memory,
+    get_all_memories,
     get_important_memories,
     get_memory,
     save_memory,
@@ -13,20 +16,33 @@ from .database import (
 
 class MemoryManager:
     """
-    High-speed memory manager for Super ZAI.
+    Super ZAI Long-Term Memory Manager.
 
     Responsibilities:
-
     - Detect explicit memory commands.
-    - Store long-term memories.
+    - Save memories.
+    - Retrieve memories.
     - Search memories.
-    - Build memory context.
-    - Avoid unnecessary database work.
+    - Delete memories.
+    - Build compact memory context for the AI.
+    - Keep database operations lightweight.
     """
 
     MEMORY_LIMIT = 5
+    IMPORTANT_LIMIT = 5
+    SEARCH_LIMIT = 5
+
+    # ========================================================
+    # INITIALIZATION
+    # ========================================================
 
     def __init__(self) -> None:
+        """
+        MemoryManager tidak membutuhkan koneksi database permanen.
+
+        Database connection dibuat oleh database.py hanya ketika
+        dibutuhkan sehingga lebih aman dan ringan.
+        """
         pass
 
     # ========================================================
@@ -35,6 +51,10 @@ class MemoryManager:
 
     @staticmethod
     def normalize(text: str) -> str:
+        """
+        Membersihkan whitespace dan membuat text lowercase.
+        """
+
         return " ".join(
             text.strip().lower().split()
         )
@@ -47,11 +67,20 @@ class MemoryManager:
         self,
         text: str,
     ) -> Optional[dict]:
+        """
+        Mendeteksi perintah memory eksplisit dari user.
+
+        Contoh:
+
+        ingat saya suka coding
+        simpan bahwa saya sedang membangun Super ZAI
+        catat saya menggunakan Windows 11
+        """
 
         normalized = self.normalize(text)
 
         # ----------------------------------------------------
-        # REMEMBER / INGAT
+        # SAVE / REMEMBER
         # ----------------------------------------------------
 
         remember_patterns = [
@@ -63,15 +92,16 @@ class MemoryManager:
         ]
 
         for pattern in remember_patterns:
-
             match = re.match(
                 pattern,
                 normalized,
             )
 
             if match:
-
                 content = match.group(1).strip()
+
+                if not content:
+                    return None
 
                 return {
                     "action": "save",
@@ -79,156 +109,196 @@ class MemoryManager:
                 }
 
         # ----------------------------------------------------
-        # FORGET
+        # FORGET / DELETE
         # ----------------------------------------------------
 
         forget_patterns = [
             r"^lupakan (.+)$",
+            r"^hapus memory (.+)$",
             r"^hapus ingatan (.+)$",
-            r"^jangan ingat (.+)$",
+            r"^lupakan bahwa (.+)$",
         ]
 
         for pattern in forget_patterns:
-
             match = re.match(
                 pattern,
                 normalized,
             )
 
             if match:
-
                 content = match.group(1).strip()
 
+                if not content:
+                    return None
+
                 return {
-                    "action": "forget",
+                    "action": "delete",
                     "content": content,
                 }
 
         # ----------------------------------------------------
-        # SHOW MEMORY
+        # MEMORY COUNT
         # ----------------------------------------------------
 
-        show_patterns = [
-            "apa yang kamu ingat tentang saya",
-            "apa yang kamu ingat",
-            "tampilkan ingatan",
-            "lihat ingatan",
-            "memory saya",
-            "ingatanku",
+        count_patterns = [
+            r"^berapa memory.*$",
+            r"^berapa ingatan.*$",
+            r"^berapa banyak memory.*$",
         ]
 
-        if normalized in show_patterns:
+        for pattern in count_patterns:
+            if re.match(pattern, normalized):
+                return {
+                    "action": "count",
+                }
 
-            return {
-                "action": "show",
-            }
+        # ----------------------------------------------------
+        # MEMORY SEARCH / RECALL
+        # ----------------------------------------------------
+
+        recall_patterns = [
+            r"^apa yang kamu ingat tentang (.+)$",
+            r"^apa yang kamu ingat mengenai (.+)$",
+            r"^ingatanku tentang (.+)$",
+            r"^cari memory tentang (.+)$",
+            r"^cari ingatan tentang (.+)$",
+        ]
+
+        for pattern in recall_patterns:
+            match = re.match(
+                pattern,
+                normalized,
+            )
+
+            if match:
+                content = match.group(1).strip()
+
+                if not content:
+                    return None
+
+                return {
+                    "action": "search",
+                    "content": content,
+                }
+
+        # ----------------------------------------------------
+        # SHOW IMPORTANT
+        # ----------------------------------------------------
+
+        important_patterns = [
+            r"^memory penting$",
+            r"^ingatan penting$",
+            r"^tampilkan memory penting$",
+            r"^tampilkan ingatan penting$",
+        ]
+
+        for pattern in important_patterns:
+            if re.match(pattern, normalized):
+                return {
+                    "action": "important",
+                }
 
         return None
 
     # ========================================================
-    # AUTOMATIC MEMORY EXTRACTION
+    # CATEGORY DETECTION
     # ========================================================
 
-    def detect_explicit_fact(
-        self,
-        text: str,
-    ) -> Optional[dict]:
+    @staticmethod
+    def detect_category(content: str) -> str:
+        """
+        Menentukan kategori memory sederhana.
+        """
 
-        normalized = self.normalize(text)
+        text = content.lower()
 
-        # ----------------------------------------------------
-        # NAME
-        # ----------------------------------------------------
-
-        name_patterns = [
-            r"nama saya (.+)",
-            r"namaku (.+)",
-            r"saya bernama (.+)",
-            r"panggil saya (.+)",
+        project_keywords = [
+            "membangun",
+            "project",
+            "proyek",
+            "aplikasi",
+            "app",
+            "super zai",
+            "zai",
+            "coding",
+            "program",
         ]
 
-        for pattern in name_patterns:
-
-            match = re.search(
-                pattern,
-                normalized,
-            )
-
-            if match:
-
-                name = match.group(1).strip()
-
-                if 1 <= len(name) <= 80:
-
-                    return {
-                        "category": "profile",
-                        "key": "name",
-                        "value": name,
-                        "importance": 10,
-                    }
-
-        # ----------------------------------------------------
-        # PREFERENCE
-        # ----------------------------------------------------
-
-        preference_patterns = [
-            r"saya suka (.+)",
-            r"aku suka (.+)",
-            r"saya senang (.+)",
-            r"aku senang (.+)",
+        preference_keywords = [
+            "suka",
+            "tidak suka",
+            "favorit",
+            "senang",
+            "lebih suka",
         ]
 
-        for pattern in preference_patterns:
-
-            match = re.search(
-                pattern,
-                normalized,
-            )
-
-            if match:
-
-                value = match.group(1).strip()
-
-                if 1 <= len(value) <= 300:
-
-                    return {
-                        "category": "preference",
-                        "key": f"suka_{value[:50]}",
-                        "value": value,
-                        "importance": 6,
-                    }
-
-        # ----------------------------------------------------
-        # PROJECT
-        # ----------------------------------------------------
-
-        project_patterns = [
-            r"proyek saya (.+)",
-            r"project saya (.+)",
-            r"aplikasi saya (.+)",
+        personal_keywords = [
+            "nama saya",
+            "namaku",
+            "saya tinggal",
+            "umur saya",
+            "saya berumur",
         ]
 
-        for pattern in project_patterns:
+        for keyword in project_keywords:
+            if keyword in text:
+                return "project"
 
-            match = re.search(
-                pattern,
-                normalized,
-            )
+        for keyword in preference_keywords:
+            if keyword in text:
+                return "preference"
 
-            if match:
+        for keyword in personal_keywords:
+            if keyword in text:
+                return "personal"
 
-                value = match.group(1).strip()
+        return "general"
 
-                if 1 <= len(value) <= 300:
+    # ========================================================
+    # IMPORTANCE
+    # ========================================================
 
-                    return {
-                        "category": "project",
-                        "key": "current_project",
-                        "value": value,
-                        "importance": 8,
-                    }
+    @staticmethod
+    def calculate_importance(
+        content: str,
+        category: str,
+    ) -> int:
+        """
+        Menghitung prioritas memory.
 
-        return None
+        Skala:
+        1  = rendah
+        5  = normal
+        10 = sangat penting
+        """
+
+        score = 5
+
+        important_words = [
+            "nama saya",
+            "namaku",
+            "saya adalah",
+            "saya sedang membangun",
+            "super zai",
+            "proyek utama",
+            "ingat ini",
+            "penting",
+        ]
+
+        for keyword in important_words:
+            if keyword in content.lower():
+                score += 2
+
+        if category in {
+            "personal",
+            "project",
+        }:
+            score += 1
+
+        return max(
+            1,
+            min(score, 10),
+        )
 
     # ========================================================
     # SAVE
@@ -236,23 +306,85 @@ class MemoryManager:
 
     def save(
         self,
-        category: str,
-        key: str,
-        value: str,
-        importance: int = 5,
-    ) -> int:
+        content: str,
+        category: Optional[str] = None,
+        importance: Optional[int] = None,
+    ) -> dict:
+        """
+        Menyimpan memory.
 
-        importance = max(
+        Karena database menggunakan key sebagai identifier,
+        content digunakan sebagai key default agar memory
+        sederhana tetap dapat ditemukan kembali.
+        """
+
+        content = content.strip()
+
+        if not content:
+            return {
+                "success": False,
+                "error": "Memory content is empty.",
+            }
+
+        final_category = (
+            category.strip()
+            if category
+            else self.detect_category(content)
+        )
+
+        final_importance = (
+            importance
+            if importance is not None
+            else self.calculate_importance(
+                content,
+                final_category,
+            )
+        )
+
+        final_importance = max(
             1,
-            min(10, importance),
+            min(
+                int(final_importance),
+                10,
+            ),
         )
 
-        return save_memory(
-            category=category,
-            key=key,
-            value=value,
-            importance=importance,
+        # Database versi sekarang mendukung key/value/category.
+        # Importance ditangani oleh database.py versi yang sudah
+        # kita test sebelumnya.
+        save_memory(
+            key=content,
+            value=content,
+            category=final_category,
+            importance=final_importance,
         )
+
+        return {
+            "success": True,
+            "key": content,
+            "value": content,
+            "category": final_category,
+            "importance": final_importance,
+        }
+
+    # ========================================================
+    # GET
+    # ========================================================
+
+    def get(
+        self,
+        key: str,
+    ) -> Optional[str]:
+        """
+        Mengambil satu memory.
+        """
+
+        key = key.strip()
+
+        if not key:
+            return None
+
+        return get_memory(key)
 
     # ========================================================
     # SEARCH
@@ -261,105 +393,91 @@ class MemoryManager:
     def search(
         self,
         query: str,
-        limit: int = MEMORY_LIMIT,
+        limit: int = SEARCH_LIMIT,
     ) -> list[dict]:
+        """
+        Mencari memory berdasarkan query.
+        """
 
-        rows = search_memories(
+        query = query.strip()
+
+        if not query:
+            return []
+
+        return search_memories(
             query=query,
-            limit=limit,
+            limit=min(
+                max(limit, 1),
+                20,
+            ),
         )
 
-        return [
-            {
-                "id": row["id"],
-                "category": row["category"],
-                "key": row["memory_key"],
-                "value": row["memory_value"],
-                "importance": row["importance"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }
-            for row in rows
-        ]
-
     # ========================================================
-    # IMPORTANT MEMORIES
+    # IMPORTANT
     # ========================================================
 
     def important(
         self,
-        limit: int = 10,
+        limit: int = IMPORTANT_LIMIT,
     ) -> list[dict]:
+        """
+        Mengambil memory paling penting.
+        """
 
-        rows = get_important_memories(
-            limit=limit,
+        return get_important_memories(
+            limit=min(
+                max(limit, 1),
+                20,
+            ),
         )
 
-        return [
-            {
-                "id": row["id"],
-                "category": row["category"],
-                "key": row["memory_key"],
-                "value": row["memory_value"],
-                "importance": row["importance"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }
-            for row in rows
-        ]
-
     # ========================================================
-    # CONTEXT
+    # ALL
     # ========================================================
 
-    def build_context(
+    def all(
         self,
-        user_message: str,
-    ) -> str:
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        Mengambil seluruh memory terbaru.
+        """
 
-        memories = self.search(
-            user_message,
-            limit=self.MEMORY_LIMIT,
+        return get_all_memories(
+            limit=min(
+                max(limit, 1),
+                500,
+            ),
         )
 
-        if not memories:
-            return ""
-
-        lines = [
-            "RELEVANT USER MEMORY:",
-        ]
-
-        for memory in memories:
-
-            lines.append(
-                f"- "
-                f"{memory['category']}/"
-                f"{memory['key']}: "
-                f"{memory['value']}"
-            )
-
-        return "\n".join(lines)
-
     # ========================================================
-    # FORGET
+    # DELETE
     # ========================================================
 
-    def forget(
+    def delete(
         self,
-        category: str,
         key: str,
     ) -> bool:
+        """
+        Menghapus memory.
+        """
 
-        return delete_memory(
-            category=category,
-            key=key,
-        )
+        key = key.strip()
+
+        if not key:
+            return False
+
+        return delete_memory(key)
 
     # ========================================================
     # COUNT
     # ========================================================
 
     def count(self) -> int:
+        """
+        Menghitung total memory.
+        """
+
         return count_memories()
 
     # ========================================================
@@ -370,12 +488,16 @@ class MemoryManager:
         self,
         text: str,
     ) -> Optional[dict]:
+        """
+        Menjalankan perintah memory jika ditemukan.
 
-        command = self.detect_memory_command(
-            text
-        )
+        Return None berarti:
+        bukan memory command.
+        """
 
-        if not command:
+        command = self.detect_memory_command(text)
+
+        if command is None:
             return None
 
         action = command["action"]
@@ -386,78 +508,211 @@ class MemoryManager:
 
         if action == "save":
 
-            content = command["content"]
-
-            memory = self.detect_explicit_fact(
-                content
-            )
-
-            if memory is None:
-
-                memory = {
-                    "category": "general",
-                    "key": content[:80],
-                    "value": content,
-                    "importance": 5,
-                }
-
-            memory_id = self.save(
-                category=memory["category"],
-                key=memory["key"],
-                value=memory["value"],
-                importance=memory["importance"],
+            result = self.save(
+                command["content"],
             )
 
             return {
+                "type": "memory",
                 "action": "save",
-                "success": True,
-                "memory_id": memory_id,
-                "memory": memory,
+                **result,
             }
 
         # ----------------------------------------------------
-        # FORGET
+        # DELETE
         # ----------------------------------------------------
 
-        if action == "forget":
+        if action == "delete":
 
             content = command["content"]
 
-            memories = self.search(
+            deleted = self.delete(
                 content,
-                limit=5,
             )
 
-            deleted = 0
-
-            for memory in memories:
-
-                if self.forget(
-                    memory["category"],
-                    memory["key"],
-                ):
-                    deleted += 1
-
             return {
-                "action": "forget",
-                "success": True,
-                "deleted": deleted,
+                "type": "memory",
+                "action": "delete",
+                "success": deleted,
+                "key": content,
             }
 
         # ----------------------------------------------------
-        # SHOW
+        # COUNT
         # ----------------------------------------------------
 
-        if action == "show":
+        if action == "count":
 
-            memories = self.important(
-                limit=20
+            return {
+                "type": "memory",
+                "action": "count",
+                "success": True,
+                "count": self.count(),
+            }
+
+        # ----------------------------------------------------
+        # SEARCH
+        # ----------------------------------------------------
+
+        if action == "search":
+
+            results = self.search(
+                command["content"],
             )
 
             return {
-                "action": "show",
+                "type": "memory",
+                "action": "search",
                 "success": True,
-                "memories": memories,
+                "query": command["content"],
+                "results": results,
+            }
+
+        # ----------------------------------------------------
+        # IMPORTANT
+        # ----------------------------------------------------
+
+        if action == "important":
+
+            results = self.important()
+
+            return {
+                "type": "memory",
+                "action": "important",
+                "success": True,
+                "results": results,
             }
 
         return None
+
+    # ========================================================
+    # BUILD CONTEXT
+    # ========================================================
+
+    def build_context(
+        self,
+        query: str,
+    ) -> str:
+        """
+        Membangun memory context ringkas untuk diberikan
+        kepada model AI.
+
+        Strategi:
+
+        1. Ambil memory penting.
+        2. Cari memory yang relevan dengan query.
+        3. Hindari duplicate.
+        4. Batasi jumlah memory.
+        5. Batasi ukuran context.
+        """
+
+        query = query.strip()
+
+        if not query:
+            return ""
+
+        collected: list[dict] = []
+        seen: set[int] = set()
+
+        # ----------------------------------------------------
+        # IMPORTANT MEMORY
+        # ----------------------------------------------------
+
+        try:
+            important = self.important(
+                self.IMPORTANT_LIMIT,
+            )
+        except Exception:
+            important = []
+
+        for memory in important:
+
+            memory_id = memory.get("id")
+
+            if memory_id is not None:
+                if memory_id in seen:
+                    continue
+
+                seen.add(memory_id)
+
+            collected.append(memory)
+
+        # ----------------------------------------------------
+        # RELEVANT MEMORY
+        # ----------------------------------------------------
+
+        try:
+            relevant = self.search(
+                query,
+                self.SEARCH_LIMIT,
+            )
+        except Exception:
+            relevant = []
+
+        for memory in relevant:
+
+            memory_id = memory.get("id")
+
+            if memory_id is not None:
+
+                if memory_id in seen:
+                    continue
+
+                seen.add(memory_id)
+
+            collected.append(memory)
+
+        # ----------------------------------------------------
+        # LIMIT
+        # ----------------------------------------------------
+
+        collected = collected[
+            : self.MEMORY_LIMIT
+        ]
+
+        if not collected:
+            return ""
+
+        # ----------------------------------------------------
+        # FORMAT
+        # ----------------------------------------------------
+
+        lines: list[str] = []
+
+        for memory in collected:
+
+            category = str(
+                memory.get(
+                    "category",
+                    "general",
+                )
+            )
+
+            key = str(
+                memory.get(
+                    "key",
+                    "",
+                )
+            )
+
+            value = str(
+                memory.get(
+                    "value",
+                    "",
+                )
+            )
+
+            if not value:
+                continue
+
+            lines.append(
+                f"- [{category}] {value}"
+            )
+
+        if not lines:
+            return ""
+
+        return (
+            "MEMORY CONTEXT:\n"
+            + "\n".join(lines)
+        )

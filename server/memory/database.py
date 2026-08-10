@@ -2,9 +2,10 @@
 from pathlib import Path
 from typing import Optional
 
+
 # ============================================================
 # ZAI MEMORY DATABASE
-# SUPER ZAI - PERSISTENT MEMORY ENGINE
+# SUPER ZAI - MEMORY CORE
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,18 +14,22 @@ DATABASE_PATH = DATA_DIR / "zai_memory.db"
 
 
 # ============================================================
-# CONNECTION
+# DATABASE CONNECTION
 # ============================================================
 
 def get_connection() -> sqlite3.Connection:
+    """
+    Membuka koneksi SQLite database ZAI.
+    """
+
     DATA_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     connection = sqlite3.connect(
-        str(DATABASE_PATH),
-        timeout=30,
+        DATABASE_PATH,
+        timeout=10,
     )
 
     connection.row_factory = sqlite3.Row
@@ -33,15 +38,47 @@ def get_connection() -> sqlite3.Connection:
 
 
 # ============================================================
-# DATABASE INITIALIZATION + MIGRATION
+# SCHEMA MIGRATION
+# ============================================================
+
+def _ensure_column(
+    cursor: sqlite3.Cursor,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    """
+    Menambahkan kolom jika belum tersedia.
+
+    Digunakan agar database lama tetap kompatibel
+    ketika schema ZAI mengalami upgrade.
+    """
+
+    cursor.execute(
+        "PRAGMA table_info(memories)"
+    )
+
+    columns = {
+        str(row["name"])
+        for row in cursor.fetchall()
+    }
+
+    if column_name not in columns:
+        cursor.execute(
+            f"""
+            ALTER TABLE memories
+            ADD COLUMN {column_name} {column_definition}
+            """
+        )
+
+
+# ============================================================
+# DATABASE INITIALIZATION
 # ============================================================
 
 def initialize_database() -> None:
     """
-    Membuat database memory ZAI.
-
-    Database lama tetap dipertahankan.
-    Kolom baru akan ditambahkan otomatis melalui migration.
+    Membuat database dan melakukan migrasi schema
+    tanpa menghapus memory yang sudah ada.
     """
 
     DATA_DIR.mkdir(
@@ -55,7 +92,7 @@ def initialize_database() -> None:
         cursor = connection.cursor()
 
         # ----------------------------------------------------
-        # MAIN TABLE
+        # BASE TABLE
         # ----------------------------------------------------
 
         cursor.execute(
@@ -63,9 +100,9 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL DEFAULT 'general',
-                key TEXT NOT NULL UNIQUE,
+                key TEXT NOT NULL,
                 value TEXT NOT NULL,
-                importance INTEGER NOT NULL DEFAULT 1,
+                importance INTEGER NOT NULL DEFAULT 5,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -76,82 +113,44 @@ def initialize_database() -> None:
         # MIGRATION
         # ----------------------------------------------------
 
-        cursor.execute(
-            "PRAGMA table_info(memories)"
+        _ensure_column(
+            cursor,
+            "category",
+            "TEXT NOT NULL DEFAULT 'general'",
         )
 
-        columns = {
-            row["name"]
-            for row in cursor.fetchall()
-        }
+        _ensure_column(
+            cursor,
+            "key",
+            "TEXT NOT NULL DEFAULT ''",
+        )
 
-        # Add category if old DB does not have it.
-        if "category" not in columns:
+        _ensure_column(
+            cursor,
+            "value",
+            "TEXT NOT NULL DEFAULT ''",
+        )
 
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN category
-                TEXT NOT NULL DEFAULT 'general'
-                """
-            )
+        _ensure_column(
+            cursor,
+            "importance",
+            "INTEGER NOT NULL DEFAULT 5",
+        )
 
-        # Add key if old DB does not have it.
-        if "key" not in columns:
+        _ensure_column(
+            cursor,
+            "created_at",
+            "DATETIME",
+        )
 
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN key
-                TEXT
-                """
-            )
-
-        # Add value if old DB does not have it.
-        if "value" not in columns:
-
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN value
-                TEXT
-                """
-            )
-
-        # Add importance.
-        if "importance" not in columns:
-
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN importance
-                INTEGER NOT NULL DEFAULT 1
-                """
-            )
-
-        # Add timestamps.
-        if "created_at" not in columns:
-
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN created_at
-                DATETIME DEFAULT CURRENT_TIMESTAMP
-                """
-            )
-
-        if "updated_at" not in columns:
-
-            cursor.execute(
-                """
-                ALTER TABLE memories
-                ADD COLUMN updated_at
-                DATETIME DEFAULT CURRENT_TIMESTAMP
-                """
-            )
+        _ensure_column(
+            cursor,
+            "updated_at",
+            "DATETIME",
+        )
 
         # ----------------------------------------------------
-        # INDEXES
+        # INDEX
         # ----------------------------------------------------
 
         cursor.execute(
@@ -174,35 +173,21 @@ def initialize_database() -> None:
             """
             CREATE INDEX IF NOT EXISTS
             idx_memories_importance
-            ON memories(importance)
-            """
-        )
-
-        # ----------------------------------------------------
-        # CLEAN OLD NULL DATA
-        # ----------------------------------------------------
-
-        cursor.execute(
-            """
-            UPDATE memories
-            SET category = 'general'
-            WHERE category IS NULL
-               OR TRIM(category) = ''
+            ON memories(importance DESC)
             """
         )
 
         cursor.execute(
             """
-            UPDATE memories
-            SET importance = 1
-            WHERE importance IS NULL
+            CREATE INDEX IF NOT EXISTS
+            idx_memories_updated
+            ON memories(updated_at DESC)
             """
         )
 
         connection.commit()
 
     finally:
-
         connection.close()
 
 
@@ -214,8 +199,11 @@ def save_memory(
     key: str,
     value: str,
     category: str = "general",
-    importance: int = 1,
+    importance: int = 5,
 ) -> None:
+    """
+    Menyimpan atau memperbarui memory.
+    """
 
     key = key.strip()
     value = value.strip()
@@ -224,20 +212,19 @@ def save_memory(
     if not key or not value:
         return
 
-    try:
-        importance = int(importance)
-    except (TypeError, ValueError):
-        importance = 1
-
     importance = max(
         1,
-        min(importance, 10),
+        min(
+            int(importance),
+            10,
+        ),
     )
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -295,7 +282,6 @@ def save_memory(
         connection.commit()
 
     finally:
-
         connection.close()
 
 
@@ -306,11 +292,20 @@ def save_memory(
 def get_memory(
     key: str,
 ) -> Optional[str]:
+    """
+    Mengambil satu memory berdasarkan key.
+    """
+
+    key = key.strip()
+
+    if not key:
+        return None
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -320,7 +315,7 @@ def get_memory(
             WHERE key = ?
             LIMIT 1
             """,
-            (key.strip(),),
+            (key,),
         )
 
         row = cursor.fetchone()
@@ -331,7 +326,6 @@ def get_memory(
         return str(row["value"])
 
     finally:
-
         connection.close()
 
 
@@ -343,6 +337,9 @@ def search_memories(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
+    """
+    Mencari memory berdasarkan key atau value.
+    """
 
     query = query.strip()
 
@@ -351,13 +348,17 @@ def search_memories(
 
     limit = max(
         1,
-        min(int(limit), 100),
+        min(
+            int(limit),
+            100,
+        ),
     )
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         pattern = f"%{query}%"
@@ -398,58 +399,6 @@ def search_memories(
         ]
 
     finally:
-
-        connection.close()
-
-
-# ============================================================
-# IMPORTANT MEMORIES
-# ============================================================
-
-def get_important_memories(
-    limit: int = 10,
-) -> list[dict]:
-
-    limit = max(
-        1,
-        min(int(limit), 100),
-    )
-
-    connection = get_connection()
-
-    try:
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                id,
-                category,
-                key,
-                value,
-                importance,
-                created_at,
-                updated_at
-            FROM memories
-            WHERE importance >= 5
-            ORDER BY
-                importance DESC,
-                updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-
-        rows = cursor.fetchall()
-
-        return [
-            dict(row)
-            for row in rows
-        ]
-
-    finally:
-
         connection.close()
 
 
@@ -460,16 +409,23 @@ def get_important_memories(
 def get_all_memories(
     limit: int = 100,
 ) -> list[dict]:
+    """
+    Mengambil memory terbaru.
+    """
 
     limit = max(
         1,
-        min(int(limit), 500),
+        min(
+            int(limit),
+            500,
+        ),
     )
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -499,7 +455,75 @@ def get_all_memories(
         ]
 
     finally:
+        connection.close()
 
+
+# ============================================================
+# IMPORTANT MEMORIES
+# ============================================================
+
+def get_important_memories(
+    limit: int = 5,
+    minimum_importance: int = 7,
+) -> list[dict]:
+    """
+    Mengambil memory yang dianggap penting.
+    """
+
+    limit = max(
+        1,
+        min(
+            int(limit),
+            100,
+        ),
+    )
+
+    minimum_importance = max(
+        1,
+        min(
+            int(minimum_importance),
+            10,
+        ),
+    )
+
+    initialize_database()
+
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                category,
+                key,
+                value,
+                importance,
+                created_at,
+                updated_at
+            FROM memories
+            WHERE importance >= ?
+            ORDER BY
+                importance DESC,
+                updated_at DESC
+            LIMIT ?
+            """,
+            (
+                minimum_importance,
+                limit,
+            ),
+        )
+
+        rows = cursor.fetchall()
+
+        return [
+            dict(row)
+            for row in rows
+        ]
+
+    finally:
         connection.close()
 
 
@@ -510,11 +534,20 @@ def get_all_memories(
 def delete_memory(
     key: str,
 ) -> bool:
+    """
+    Menghapus memory berdasarkan key.
+    """
+
+    key = key.strip()
+
+    if not key:
+        return False
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -522,7 +555,7 @@ def delete_memory(
             DELETE FROM memories
             WHERE key = ?
             """,
-            (key.strip(),),
+            (key,),
         )
 
         deleted = cursor.rowcount > 0
@@ -532,7 +565,6 @@ def delete_memory(
         return deleted
 
     finally:
-
         connection.close()
 
 
@@ -541,11 +573,15 @@ def delete_memory(
 # ============================================================
 
 def clear_memories() -> None:
+    """
+    Menghapus seluruh memory.
+    """
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -557,7 +593,6 @@ def clear_memories() -> None:
         connection.commit()
 
     finally:
-
         connection.close()
 
 
@@ -566,11 +601,15 @@ def clear_memories() -> None:
 # ============================================================
 
 def count_memories() -> int:
+    """
+    Menghitung jumlah seluruh memory ZAI.
+    """
+
+    initialize_database()
 
     connection = get_connection()
 
     try:
-
         cursor = connection.cursor()
 
         cursor.execute(
@@ -588,7 +627,6 @@ def count_memories() -> int:
         return int(row["total"])
 
     finally:
-
         connection.close()
 
 
@@ -597,52 +635,22 @@ def count_memories() -> int:
 # ============================================================
 
 def database_status() -> dict:
+    """
+    Informasi status database memory.
+    """
 
-    connection = get_connection()
+    initialize_database()
 
-    try:
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            "PRAGMA table_info(memories)"
-        )
-
-        columns = [
-            row["name"]
-            for row in cursor.fetchall()
-        ]
-
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM memories
-            """
-        )
-
-        row = cursor.fetchone()
-
-        total = (
-            int(row["total"])
-            if row
-            else 0
-        )
-
-        return {
-            "database": str(DATABASE_PATH),
-            "exists": DATABASE_PATH.exists(),
-            "table": "memories",
-            "columns": columns,
-            "memory_count": total,
-        }
-
-    finally:
-
-        connection.close()
+    return {
+        "database": "zai_memory.db",
+        "path": str(DATABASE_PATH),
+        "exists": DATABASE_PATH.exists(),
+        "memory_count": count_memories(),
+    }
 
 
 # ============================================================
-# INITIALIZE ON IMPORT
+# AUTO INITIALIZATION
 # ============================================================
 
 initialize_database()

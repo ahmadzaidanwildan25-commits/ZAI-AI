@@ -3,20 +3,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
+
+import asyncio
 import httpx
 import json
 import time
-import asyncio
-from memory.database import initialize_database
+
+from memory.database import (
+    initialize_database,
+    count_memories,
+)
+
 from memory.manager import MemoryManager
 
+
 # ============================================================
-# SUPER ZAI
-# INTELLIGENCE CORE + ROUTER
+# ZAI SERVER
+# SUPER ZAI - AI CORE
+# VERSION 0.6.0
 # ============================================================
 
 APP_NAME = "ZAI"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.6.0"
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_URL}/api/chat"
@@ -29,12 +37,14 @@ KEEP_ALIVE = -1
 
 
 # ============================================================
-# SPEED CONFIGURATION
+# PERFORMANCE
 # ============================================================
 
 MAX_HISTORY = 8
 MAX_HISTORY_CHARS = 3000
 MAX_MESSAGE_CHARS = 12000
+
+MEMORY_CONTEXT_LIMIT = 5
 
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = None
@@ -45,9 +55,9 @@ READ_TIMEOUT = None
 # ============================================================
 
 app = FastAPI(
-    title="Super ZAI AI Core",
+    title="ZAI AI Core",
     version=APP_VERSION,
-    description="Super ZAI local intelligence core.",
+    description="Super ZAI local AI backend.",
 )
 
 
@@ -84,29 +94,54 @@ class ChatRequest(BaseModel):
 # ============================================================
 
 SYSTEM_PROMPT = """
-You are ZAI, a highly capable personal AI assistant.
+You are ZAI, the intelligence core of Super ZAI.
 
-Your name is ZAI.
+You are a personal AI assistant.
 
-Core behavior:
+CORE BEHAVIOR:
 
-- Answer the user's actual question.
+- Answer naturally.
 - Be accurate and useful.
-- Respond naturally.
+- Understand the user's intent.
+- Use relevant memory when available.
+- Never invent personal information.
+- Never pretend to know something that is not available.
+- Do not reveal hidden reasoning.
 - Respond in the user's language.
-- Keep simple answers concise.
-- Give more detail when the task requires it.
-- Never expose hidden chain-of-thought or private reasoning.
-- Do not claim that a tool was used when it was not used.
-- Do not invent current information.
-- Prioritize speed for simple requests.
-- For complex requests, provide a complete and useful answer.
+- Keep simple questions concise.
+- Give useful detail for complex tasks.
+- Do not unnecessarily repeat yourself.
+- Maintain conversation context.
+
+MEMORY:
+
+You may receive a section called MEMORY CONTEXT.
+
+MEMORY CONTEXT contains information previously saved by the user.
+
+Use it naturally when it is relevant.
+
+Do not mention the internal database, SQLite,
+MemoryManager, implementation, or memory system
+unless the user explicitly asks about those systems.
+
+If memory contains the answer to a personal question,
+use that memory.
+
+If memory does not contain the answer,
+do not invent one.
+
+IMPORTANT:
+
+The memory context is reference information.
+The latest user message always has priority.
 
 You are the intelligence core of Super ZAI.
 
-Your architecture can eventually contain:
-- memory
-- web
+Future capabilities may include:
+
+- long-term memory
+- web access
 - files
 - computer control
 - automation
@@ -114,24 +149,43 @@ Your architecture can eventually contain:
 - devices
 - agents
 - projects
-- knowledge
-
-At this stage, the local Qwen model is the primary reasoning engine.
+- knowledge systems
 """.strip()
 
 
 # ============================================================
-# HTTP CLIENT
+# GLOBAL SERVICES
 # ============================================================
 
 client: Optional[httpx.AsyncClient] = None
-memory_manager = MemoryManager()
+
+memory_manager: Optional[MemoryManager] = None
+
+
+# ============================================================
+# STARTUP
+# ============================================================
 
 @app.on_event("startup")
 async def startup_event():
     global client
+    global memory_manager
+
+    # --------------------------------------------------------
+    # DATABASE
+    # --------------------------------------------------------
 
     initialize_database()
+
+    # --------------------------------------------------------
+    # MEMORY MANAGER
+    # --------------------------------------------------------
+
+    memory_manager = MemoryManager()
+
+    # --------------------------------------------------------
+    # HTTP CLIENT
+    # --------------------------------------------------------
 
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(
@@ -146,6 +200,10 @@ async def startup_event():
         ),
     )
 
+    # --------------------------------------------------------
+    # SERVER INFORMATION
+    # --------------------------------------------------------
+
     print("=" * 64)
     print("ZAI AI CORE")
     print("=" * 64)
@@ -156,10 +214,22 @@ async def startup_event():
     print("Stream  : ENABLED")
     print("Think   : DISABLED")
     print("Keep    : INFINITE")
+    print(f"Memories: {count_memories()}")
     print("Status  : SERVER READY")
     print("=" * 64)
 
-    asyncio.create_task(background_warmup())
+    # --------------------------------------------------------
+    # BACKGROUND WARMUP
+    # --------------------------------------------------------
+
+    asyncio.create_task(
+        background_warmup()
+    )
+
+
+# ============================================================
+# SHUTDOWN
+# ============================================================
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -184,153 +254,40 @@ def get_client() -> httpx.AsyncClient:
 
 
 # ============================================================
+# MEMORY MANAGER HELPER
+# ============================================================
+
+def get_memory_manager() -> MemoryManager:
+    if memory_manager is None:
+        raise RuntimeError(
+            "Memory manager is not initialized."
+        )
+
+    return memory_manager
+
+
+# ============================================================
 # MODE NORMALIZATION
 # ============================================================
 
-def normalize_mode(mode: Optional[str]) -> str:
+def normalize_mode(
+    mode: Optional[str],
+) -> str:
 
     if not mode:
         return "auto"
 
     mode = mode.lower().strip()
 
-    allowed_modes = {
+    if mode not in {
         "auto",
         "fast",
         "normal",
         "deep",
-    }
-
-    if mode not in allowed_modes:
+    }:
         return "auto"
 
     return mode
-
-
-# ============================================================
-# INTELLIGENCE ROUTER
-# ============================================================
-
-def route_intent(message: str) -> str:
-    """
-    Determine which ZAI capability should handle the request.
-
-    Current capabilities:
-        chat
-        web
-        memory
-        agent
-        coding
-    """
-
-    text = message.lower().strip()
-
-    # --------------------------------------------------------
-    # WEB
-    # --------------------------------------------------------
-
-    web_patterns = [
-        "sekarang",
-        "saat ini",
-        "hari ini",
-        "terbaru",
-        "terkini",
-        "latest",
-        "berita",
-        "news",
-        "harga hari ini",
-        "cuaca",
-        "presiden",
-        "siapa yang menjabat",
-        "jadwal hari ini",
-        "informasi terbaru",
-    ]
-
-    for pattern in web_patterns:
-        if pattern in text:
-            return "web"
-
-    # --------------------------------------------------------
-    # MEMORY
-    # --------------------------------------------------------
-
-    memory_patterns = [
-        "ingat ini",
-        "ingat bahwa",
-        "ingat kalau",
-        "simpan ini",
-        "simpan bahwa",
-        "catat ini",
-        "jangan lupa",
-        "apa yang kamu ingat",
-        "kamu ingat",
-        "ingat nama saya",
-        "ingat saya",
-    ]
-
-    for pattern in memory_patterns:
-        if pattern in text:
-            return "memory"
-
-    # --------------------------------------------------------
-    # AGENT
-    # --------------------------------------------------------
-
-    agent_patterns = [
-        "jalankan",
-        "eksekusi",
-        "buka aplikasi",
-        "buka program",
-        "buat file lalu",
-        "buat project lalu",
-        "perbaiki lalu jalankan",
-        "kerjakan semuanya",
-        "lakukan semuanya",
-        "otomatis",
-        "automatically",
-        "selesaikan sampai selesai",
-    ]
-
-    for pattern in agent_patterns:
-        if pattern in text:
-            return "agent"
-
-    # --------------------------------------------------------
-    # CODING
-    # --------------------------------------------------------
-
-    coding_patterns = [
-        "coding",
-        "kode",
-        "program",
-        "flutter",
-        "dart",
-        "python",
-        "fastapi",
-        "javascript",
-        "typescript",
-        "html",
-        "css",
-        "api",
-        "debug",
-        "debugging",
-        "error coding",
-        "buat aplikasi",
-        "buat sistem",
-        "buat program",
-        "full code",
-        "kode lengkap",
-    ]
-
-    for pattern in coding_patterns:
-        if pattern in text:
-            return "coding"
-
-    # --------------------------------------------------------
-    # DEFAULT
-    # --------------------------------------------------------
-
-    return "chat"
 
 
 # ============================================================
@@ -348,7 +305,7 @@ def detect_mode(
     text = message.lower().strip()
 
     # --------------------------------------------------------
-    # FAST
+    # VERY SIMPLE
     # --------------------------------------------------------
 
     fast_exact = {
@@ -375,6 +332,10 @@ def detect_mode(
     if text in fast_exact:
         return "fast"
 
+    # --------------------------------------------------------
+    # FAST KEYWORDS
+    # --------------------------------------------------------
+
     fast_keywords = [
         "jawab singkat",
         "singkat saja",
@@ -389,11 +350,12 @@ def detect_mode(
     ]
 
     for keyword in fast_keywords:
+
         if keyword in text and len(text) < 180:
             return "fast"
 
     # --------------------------------------------------------
-    # DEEP
+    # DEEP TASKS
     # --------------------------------------------------------
 
     deep_keywords = [
@@ -401,6 +363,8 @@ def detect_mode(
         "analisa mendalam",
         "bandingkan secara detail",
         "buat arsitektur",
+        "debug",
+        "debugging",
         "jelaskan secara mendalam",
         "riset",
         "research",
@@ -412,10 +376,10 @@ def detect_mode(
         "dari awal sampai akhir",
         "production",
         "production ready",
-        "debug project",
     ]
 
     for keyword in deep_keywords:
+
         if keyword in text:
             return "deep"
 
@@ -428,85 +392,80 @@ def detect_mode(
 
 def select_options(mode: str) -> dict:
 
-    # FAST
     if mode == "fast":
+
         return {
             "temperature": 0.15,
             "top_p": 0.75,
             "num_predict": 96,
         }
 
-    # NORMAL
     if mode == "normal":
+
         return {
             "temperature": 0.25,
             "top_p": 0.85,
             "num_predict": 512,
         }
 
-    # DEEP
     if mode == "deep":
+
         return {
             "temperature": 0.35,
             "top_p": 0.90,
             "num_predict": 1536,
         }
 
-    # FALLBACK
     return {
         "temperature": 0.25,
         "top_p": 0.85,
         "num_predict": 512,
     }
 
-@app.get("/memory")
-async def memory_status():
-
-    return {
-        "enabled": True,
-        "total_memories": memory_manager.count(),
-    }
-@app.get("/memory/list")
-async def memory_list():
-
-    return {
-        "success": True,
-        "memories": memory_manager.important(
-            limit=50
-        ),
-    }
-@app.get("/memory/search")
-async def memory_search(
-    q: str,
-):
-
-    return {
-        "success": True,
-        "query": q,
-        "memories": memory_manager.search(
-            q,
-            limit=10,
-        ),
-    }
 
 # ============================================================
-# HISTORY
+# HISTORY BUILDER
 # ============================================================
-def build_messages(user_message, memory_context=None, history=None):
-    messages = []
 
-    if memory_context:
+def build_messages(
+    user_message: str,
+    history: Optional[list[Message]],
+    memory_context: str = "",
+) -> list[dict]:
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        }
+    ]
+
+    # --------------------------------------------------------
+    # MEMORY CONTEXT
+    # --------------------------------------------------------
+
+    if memory_context.strip():
+
         messages.append(
             {
                 "role": "system",
-                "content": memory_context,
+                "content": (
+                    "MEMORY CONTEXT:\n\n"
+                    + memory_context.strip()
+                ),
             }
         )
 
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
     if history:
+
         recent_history = history[-MAX_HISTORY:]
 
         for item in recent_history:
+
             role = item.role.lower().strip()
 
             if role not in {
@@ -521,7 +480,9 @@ def build_messages(user_message, memory_context=None, history=None):
                 continue
 
             if len(content) > MAX_HISTORY_CHARS:
-                content = content[:MAX_HISTORY_CHARS]
+                content = content[
+                    :MAX_HISTORY_CHARS
+                ]
 
             messages.append(
                 {
@@ -530,10 +491,16 @@ def build_messages(user_message, memory_context=None, history=None):
                 }
             )
 
+    # --------------------------------------------------------
+    # CURRENT USER MESSAGE
+    # --------------------------------------------------------
+
     message = user_message.strip()
 
     if len(message) > MAX_MESSAGE_CHARS:
-        message = message[:MAX_MESSAGE_CHARS]
+        message = message[
+            :MAX_MESSAGE_CHARS
+        ]
 
     messages.append(
         {
@@ -543,6 +510,220 @@ def build_messages(user_message, memory_context=None, history=None):
     )
 
     return messages
+
+
+# ============================================================
+# MEMORY CONTEXT
+# ============================================================
+
+def build_memory_context(
+    query: str,
+) -> str:
+
+    manager = get_memory_manager()
+
+    try:
+
+        # MemoryManager yang sudah kita test:
+        # build_context(query)
+
+        context = manager.build_context(
+            query
+        )
+
+        if not context:
+            return ""
+
+        # build_context() sudah menghasilkan
+        # format MEMORY CONTEXT.
+        if context.startswith(
+            "MEMORY CONTEXT:"
+        ):
+
+            context = context[
+                len("MEMORY CONTEXT:"):
+            ].strip()
+
+        return context.strip()
+
+    except Exception as error:
+
+        print(
+            "[ZAI] Memory context error:",
+            error,
+        )
+
+        return ""
+
+
+# ============================================================
+# MEMORY COMMAND
+# ============================================================
+
+def process_memory_command(
+    text: str,
+) -> Optional[dict]:
+
+    manager = get_memory_manager()
+
+    try:
+
+        command = manager.detect_memory_command(
+            text
+        )
+
+        return command
+
+    except AttributeError:
+
+        return None
+
+    except Exception as error:
+
+        print(
+            "[ZAI] Memory command error:",
+            error,
+        )
+
+        return None
+
+
+# ============================================================
+# MEMORY COMMAND EXECUTION
+# ============================================================
+
+def execute_memory_command(
+    command: dict,
+) -> Optional[str]:
+
+    manager = get_memory_manager()
+
+    action = command.get(
+        "action"
+    )
+
+    # ========================================================
+    # SAVE
+    # ========================================================
+
+    if action == "save":
+
+        content = str(
+            command.get(
+                "content",
+                "",
+            )
+        ).strip()
+
+        if not content:
+            return None
+
+        try:
+
+            result = manager.save(
+                content,
+                category="project",
+                importance=10,
+            )
+
+            if isinstance(result, dict):
+
+                if result.get(
+                    "success",
+                    True,
+                ):
+
+                    return (
+                        "Baik. Saya akan "
+                        "mengingatnya."
+                    )
+
+            return (
+                "Baik. Saya akan "
+                "mengingatnya."
+            )
+
+        except AttributeError:
+
+            # Compatibility fallback
+            # dengan MemoryManager versi lama.
+
+            try:
+
+                result = manager.save_memory(
+                    content,
+                    content,
+                    category="project",
+                    importance=10,
+                )
+
+            except TypeError:
+
+                result = manager.save_memory(
+                    content,
+                    content,
+                    category="project",
+                )
+
+            if isinstance(result, dict):
+
+                if result.get(
+                    "success",
+                    True,
+                ):
+
+                    return (
+                        "Baik. Saya akan "
+                        "mengingatnya."
+                    )
+
+            return (
+                "Baik. Saya akan "
+                "mengingatnya."
+            )
+
+    # ========================================================
+    # DELETE
+    # ========================================================
+
+    if action == "delete":
+
+        key = str(
+            command.get(
+                "key",
+                "",
+            )
+        ).strip()
+
+        if not key:
+            return None
+
+        try:
+
+            result = manager.delete(
+                key
+            )
+
+        except AttributeError:
+
+            result = manager.delete_memory(
+                key
+            )
+
+        if result:
+
+            return (
+                "Baik. Memory tersebut "
+                "sudah saya hapus."
+            )
+
+        return (
+            "Saya tidak menemukan "
+            "memory tersebut."
+        )
+
+    return None
+
 
 # ============================================================
 # WARMUP
@@ -573,12 +754,15 @@ async def perform_warmup() -> dict:
             (
                 time.perf_counter()
                 - started
-            ) * 1000,
+            )
+            * 1000,
             2,
         )
 
         return {
-            "success": response.status_code == 200,
+            "success": (
+                response.status_code == 200
+            ),
             "model": MODEL,
             "latency_ms": latency_ms,
         }
@@ -625,10 +809,10 @@ async def root():
         "version": APP_VERSION,
         "status": "ONLINE",
         "model": MODEL,
+        "memory": True,
         "streaming": True,
         "thinking": False,
         "keep_alive": True,
-        "router": True,
     }
 
 
@@ -665,7 +849,8 @@ async def health():
             (
                 time.perf_counter()
                 - started
-            ) * 1000,
+            )
+            * 1000,
             2,
         )
 
@@ -674,6 +859,7 @@ async def health():
             return {
                 "status": "DEGRADED",
                 "ollama": False,
+                "memory": True,
                 "latency_ms": latency_ms,
             }
 
@@ -698,6 +884,8 @@ async def health():
             "ollama": True,
             "model": MODEL,
             "model_available": model_available,
+            "memory": True,
+            "memory_count": count_memories(),
             "latency_ms": latency_ms,
         }
 
@@ -706,8 +894,22 @@ async def health():
         return {
             "status": "OFFLINE",
             "ollama": False,
+            "memory": True,
             "error": str(error),
         }
+
+
+# ============================================================
+# MEMORY STATUS
+# ============================================================
+
+@app.get("/memory")
+async def memory_status():
+
+    return {
+        "enabled": True,
+        "count": count_memories(),
+    }
 
 
 # ============================================================
@@ -721,41 +923,6 @@ async def warmup():
 
 
 # ============================================================
-# ROUTER TEST
-# ============================================================
-
-@app.get("/route")
-async def route(message: str):
-
-    clean_message = message.strip()
-
-    if not clean_message:
-
-        return {
-            "success": False,
-            "error": "Message cannot be empty.",
-        }
-
-    requested_mode = normalize_mode("auto")
-
-    mode = detect_mode(
-        clean_message,
-        requested_mode,
-    )
-
-    intent = route_intent(
-        clean_message
-    )
-
-    return {
-        "success": True,
-        "message": clean_message,
-        "intent": intent,
-        "mode": mode,
-    }
-
-
-# ============================================================
 # OLLAMA STREAM
 # ============================================================
 
@@ -764,6 +931,10 @@ async def ollama_stream(
     history: Optional[list[Message]],
     requested_mode: str,
 ):
+
+    # ========================================================
+    # MODE
+    # ========================================================
 
     normalized_mode = normalize_mode(
         requested_mode
@@ -774,16 +945,89 @@ async def ollama_stream(
         normalized_mode,
     )
 
-    intent = route_intent(
+    options = select_options(
+        mode
+    )
+
+    # ========================================================
+    # MEMORY COMMAND
+    # ========================================================
+
+    memory_command = process_memory_command(
         user_message
     )
 
-    options = select_options(mode)
+    if memory_command:
+
+        memory_response = execute_memory_command(
+            memory_command
+        )
+
+        if memory_response:
+
+            yield (
+                json.dumps(
+                    {
+                        "type": "start",
+                        "mode": "fast",
+                        "latency_ms": 0,
+                        "memory": True,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+            yield (
+                json.dumps(
+                    {
+                        "type": "token",
+                        "content": memory_response,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+            yield (
+                json.dumps(
+                    {
+                        "type": "done",
+                        "mode": "fast",
+                        "total_latency_ms": 0,
+                        "token_count": 1,
+                        "memory": True,
+                        "memory_used": True,
+                        "done": True,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+            return
+
+    # ========================================================
+    # MEMORY CONTEXT
+    # ========================================================
+
+    memory_context = build_memory_context(
+        user_message
+    )
+
+    # ========================================================
+    # MESSAGES
+    # ========================================================
 
     messages = build_messages(
         user_message,
         history,
+        memory_context,
     )
+
+    # ========================================================
+    # OLLAMA PAYLOAD
+    # ========================================================
 
     payload = {
         "model": MODEL,
@@ -807,6 +1051,10 @@ async def ollama_stream(
             json=payload,
         ) as response:
 
+            # =================================================
+            # HTTP ERROR
+            # =================================================
+
             if response.status_code != 200:
 
                 body = await response.aread()
@@ -828,6 +1076,10 @@ async def ollama_stream(
                 )
 
                 return
+
+            # =================================================
+            # STREAM
+            # =================================================
 
             async for line in response.aiter_lines():
 
@@ -852,6 +1104,10 @@ async def ollama_stream(
                     "",
                 )
 
+                # =============================================
+                # TOKEN
+                # =============================================
+
                 if content:
 
                     token_count += 1
@@ -866,7 +1122,8 @@ async def ollama_stream(
                             (
                                 first_token_time
                                 - started
-                            ) * 1000,
+                            )
+                            * 1000,
                             2,
                         )
 
@@ -874,10 +1131,12 @@ async def ollama_stream(
                             json.dumps(
                                 {
                                     "type": "start",
-                                    "intent": intent,
                                     "mode": mode,
                                     "latency_ms": (
                                         first_token_latency_ms
+                                    ),
+                                    "memory_used": bool(
+                                        memory_context
                                     ),
                                 },
                                 ensure_ascii=False,
@@ -896,13 +1155,18 @@ async def ollama_stream(
                         + "\n"
                     )
 
+                # =============================================
+                # DONE
+                # =============================================
+
                 if data.get("done"):
 
                     total_latency_ms = round(
                         (
                             time.perf_counter()
                             - started
-                        ) * 1000,
+                        )
+                        * 1000,
                         2,
                     )
 
@@ -910,12 +1174,14 @@ async def ollama_stream(
                         json.dumps(
                             {
                                 "type": "done",
-                                "intent": intent,
                                 "mode": mode,
                                 "total_latency_ms": (
                                     total_latency_ms
                                 ),
                                 "token_count": token_count,
+                                "memory_used": bool(
+                                    memory_context
+                                ),
                                 "done": True,
                             },
                             ensure_ascii=False,
@@ -924,6 +1190,10 @@ async def ollama_stream(
                     )
 
                     break
+
+    # ========================================================
+    # CONNECTION ERROR
+    # ========================================================
 
     except httpx.ConnectError:
 
@@ -942,6 +1212,10 @@ async def ollama_stream(
             + "\n"
         )
 
+    # ========================================================
+    # TIMEOUT
+    # ========================================================
+
     except httpx.ReadTimeout:
 
         yield (
@@ -950,8 +1224,8 @@ async def ollama_stream(
                     "type": "error",
                     "message": (
                         "Ollama membutuhkan waktu "
-                        "terlalu lama untuk memberikan "
-                        "respons."
+                        "terlalu lama untuk "
+                        "memberikan respons."
                     ),
                 },
                 ensure_ascii=False,
@@ -959,9 +1233,17 @@ async def ollama_stream(
             + "\n"
         )
 
+    # ========================================================
+    # CANCELLED
+    # ========================================================
+
     except asyncio.CancelledError:
 
         raise
+
+    # ========================================================
+    # UNKNOWN ERROR
+    # ========================================================
 
     except Exception as error:
 
@@ -982,7 +1264,9 @@ async def ollama_stream(
 # ============================================================
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+):
 
     message = request.message.strip()
 
@@ -1024,7 +1308,7 @@ async def speed():
         "streaming": True,
         "thinking": False,
         "keep_alive": True,
-        "router": True,
+        "memory": True,
         "max_history": MAX_HISTORY,
         "modes": {
             "fast": {
@@ -1055,14 +1339,8 @@ async def info():
         "streaming": True,
         "thinking": False,
         "keep_alive": KEEP_ALIVE,
-        "router": True,
-        "capabilities": [
-            "chat",
-            "web",
-            "memory",
-            "coding",
-            "agent",
-        ],
+        "memory": True,
+        "memory_count": count_memories(),
         "max_history": MAX_HISTORY,
         "max_history_chars": MAX_HISTORY_CHARS,
         "max_message_chars": MAX_MESSAGE_CHARS,
