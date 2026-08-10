@@ -1,0 +1,319 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from .engine import IntentEngine, get_intent_engine
+
+
+# ============================================================
+# SUPER ZAI
+# INTENT ROUTER
+# VERSION 0.7.0
+# ============================================================
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    """
+    Hasil routing sebuah pesan ZAI.
+    """
+
+    intent: str
+    confidence: float
+    handler: str
+    high_confidence: bool
+    normalized_text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "confidence": self.confidence,
+            "handler": self.handler,
+            "high_confidence": self.high_confidence,
+            "normalized_text": self.normalized_text,
+        }
+
+
+class IntentRouter:
+    """
+    Router utama Super ZAI.
+
+    Tugas:
+    - menerima hasil IntentEngine
+    - menentukan handler
+    - menjaga routing tetap konsisten
+    - menyediakan fallback
+    - memungkinkan handler dikembangkan kemudian
+    """
+
+    VERSION = "0.7.0"
+
+    DEFAULT_HANDLER = "general"
+
+    INTENT_HANDLERS: dict[str, str] = {
+        "greeting": "handle_greeting",
+        "identity": "handle_identity",
+        "memory_save": "handle_memory_save",
+        "memory_query": "handle_memory_query",
+        "memory_delete": "handle_memory_delete",
+        "memory_count": "handle_memory_count",
+        "status": "handle_status",
+        "help": "handle_help",
+        "weather": "weather",
+        "calculation": "handle_calculation",
+        "coding": "handle_coding",
+        "search": "handle_search",
+        "general": "handle_general",
+    }
+
+    def __init__(
+        self,
+        engine: Optional[IntentEngine] = None,
+    ) -> None:
+        self.engine = (
+            engine
+            if engine is not None
+            else get_intent_engine()
+        )
+
+    # ========================================================
+    # NORMALIZATION
+    # ========================================================
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        return " ".join(
+            str(text).strip().lower().split()
+        )
+
+    # ========================================================
+    # ROUTE
+    # ========================================================
+
+    def route(
+        self,
+        text: str,
+    ) -> RouteResult:
+
+        normalized_text = self.normalize(text)
+
+        if not normalized_text:
+            return RouteResult(
+                intent="general",
+                confidence=0.0,
+                handler=self.DEFAULT_HANDLER,
+                high_confidence=False,
+                normalized_text="",
+            )
+
+        analysis = self.engine.analyze(
+            normalized_text
+        )
+
+        intent = str(
+            analysis.get(
+                "intent",
+                "general",
+            )
+        ).strip()
+
+        confidence = float(
+            analysis.get(
+                "confidence",
+                0.0,
+            )
+        )
+
+        high_confidence = bool(
+            analysis.get(
+                "high_confidence",
+                False,
+            )
+        )
+
+        handler = self.INTENT_HANDLERS.get(
+            intent,
+            self.DEFAULT_HANDLER,
+        )
+
+        return RouteResult(
+            intent=intent,
+            confidence=confidence,
+            handler=handler,
+            high_confidence=high_confidence,
+            normalized_text=normalized_text,
+        )
+
+    # ========================================================
+    # DICT ROUTE
+    # ========================================================
+
+    def route_dict(
+        self,
+        text: str,
+    ) -> dict[str, Any]:
+
+        return self.route(text).to_dict()
+
+    # ========================================================
+    # INTENT
+    # ========================================================
+
+    def get_intent(
+        self,
+        text: str,
+    ) -> str:
+
+        return self.route(text).intent
+
+    # ========================================================
+    # HANDLER
+    # ========================================================
+
+    def get_handler(
+        self,
+        text: str,
+    ) -> str:
+
+        return self.route(text).handler
+
+    # ========================================================
+    # CONFIDENCE
+    # ========================================================
+
+    def get_confidence(
+        self,
+        text: str,
+    ) -> float:
+
+        return self.route(text).confidence
+
+    # ========================================================
+    # HIGH CONFIDENCE
+    # ========================================================
+
+    def is_high_confidence(
+        self,
+        text: str,
+    ) -> bool:
+
+        return self.route(text).high_confidence
+
+    # ========================================================
+    # HANDLER REGISTRY
+    # ========================================================
+
+    def has_handler(
+        self,
+        intent: str,
+    ) -> bool:
+
+        return (
+            str(intent).strip()
+            in self.INTENT_HANDLERS
+        )
+
+    def get_handler_for_intent(
+        self,
+        intent: str,
+    ) -> str:
+
+        return self.INTENT_HANDLERS.get(
+            str(intent).strip(),
+            self.DEFAULT_HANDLER,
+        )
+
+    # ========================================================
+    # ALL INTENTS
+    # ========================================================
+
+    def get_supported_intents(
+        self,
+    ) -> list[str]:
+
+        return list(
+            self.INTENT_HANDLERS.keys()
+        )
+
+    # ========================================================
+    # REGISTER
+    # ========================================================
+
+    def register_handler(
+        self,
+        intent: str,
+        handler_name: str,
+    ) -> None:
+
+        normalized_intent = (
+            str(intent)
+            .strip()
+            .lower()
+        )
+
+        normalized_handler = (
+            str(handler_name)
+            .strip()
+        )
+
+        if not normalized_intent:
+            raise ValueError(
+                "Intent cannot be empty."
+            )
+
+        if not normalized_handler:
+            raise ValueError(
+                "Handler name cannot be empty."
+            )
+
+        self.INTENT_HANDLERS[
+            normalized_intent
+        ] = normalized_handler
+
+    # ========================================================
+    # REMOVE
+    # ========================================================
+
+    def unregister_handler(
+        self,
+        intent: str,
+    ) -> bool:
+
+        normalized_intent = (
+            str(intent)
+            .strip()
+            .lower()
+        )
+
+        if (
+            normalized_intent
+            not in self.INTENT_HANDLERS
+        ):
+            return False
+
+        del self.INTENT_HANDLERS[
+            normalized_intent
+        ]
+
+        return True
+
+
+# ============================================================
+# SINGLETON
+# ============================================================
+
+_router_instance: Optional[IntentRouter] = None
+
+
+def get_intent_router() -> IntentRouter:
+    """
+    Mengembalikan satu instance IntentRouter.
+    """
+
+    global _router_instance
+
+    if _router_instance is None:
+        _router_instance = IntentRouter()
+
+    return _router_instance

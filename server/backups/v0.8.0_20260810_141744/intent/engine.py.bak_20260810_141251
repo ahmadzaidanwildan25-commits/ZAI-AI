@@ -1,0 +1,502 @@
+"""
+ZAI Intent Engine.
+
+Classifies user messages into lightweight intents before
+the message reaches the main LLM pipeline.
+
+This module intentionally contains no database, HTTP,
+Ollama, or filesystem dependency.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Final, Optional
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+DEFAULT_CONFIDENCE: Final[float] = 0.50
+HIGH_CONFIDENCE: Final[float] = 0.95
+MEDIUM_CONFIDENCE: Final[float] = 0.85
+
+MAX_INPUT_LENGTH: Final[int] = 12_000
+
+
+# ============================================================
+# INTENT NAMES
+# ============================================================
+
+INTENT_GREETING: Final[str] = "greeting"
+INTENT_IDENTITY: Final[str] = "identity"
+INTENT_FAREWELL: Final[str] = "farewell"
+
+INTENT_MEMORY_SAVE: Final[str] = "memory_save"
+INTENT_MEMORY_QUERY: Final[str] = "memory_query"
+INTENT_MEMORY_DELETE: Final[str] = "memory_delete"
+INTENT_MEMORY_COUNT: Final[str] = "memory_count"
+
+INTENT_STATUS: Final[str] = "status"
+INTENT_HELP: Final[str] = "help"
+
+INTENT_CALCULATION: Final[str] = "calculation"
+INTENT_SEARCH: Final[str] = "search"
+INTENT_CODE: Final[str] = "coding"
+INTENT_GENERAL: Final[str] = "general"
+
+
+# ============================================================
+# RESULT DTO
+# ============================================================
+
+
+@dataclass(frozen=True)
+class IntentResult:
+    """
+    Structured result returned by the intent classifier.
+    """
+
+    intent: str
+    confidence: float
+    normalized_text: str
+    matched_pattern: Optional[str] = None
+
+    @property
+    def is_high_confidence(self) -> bool:
+        """Return True when classification is highly confident."""
+        return self.confidence >= HIGH_CONFIDENCE
+
+    def to_dict(self) -> dict:
+        """Convert the result to a JSON-friendly dictionary."""
+        return {
+            "intent": self.intent,
+            "confidence": self.confidence,
+            "normalized_text": self.normalized_text,
+            "matched_pattern": self.matched_pattern,
+            "high_confidence": self.is_high_confidence,
+        }
+
+
+# ============================================================
+# INTENT ENGINE
+# ============================================================
+
+
+class IntentEngine:
+    """
+    Lightweight deterministic intent classifier for Super ZAI.
+
+    The engine runs before the LLM so obvious commands such as
+    greetings, identity questions, memory operations, and status
+    requests can be recognized without consuming LLM generation.
+    """
+
+    GREETING_PATTERNS: Final[tuple[str, ...]] = (
+        r"^halo$",
+        r"^hai$",
+        r"^hi$",
+        r"^hello$",
+        r"^hey$",
+        r"^halo zai$",
+        r"^hai zai$",
+        r"^hello zai$",
+        r"^selamat pagi$",
+        r"^selamat siang$",
+        r"^selamat sore$",
+        r"^selamat malam$",
+    )
+
+    IDENTITY_PATTERNS: Final[tuple[str, ...]] = (
+        r"^siapa kamu\??$",
+        r"^kamu siapa\??$",
+        r"^siapa anda\??$",
+        r"^anda siapa\??$",
+        r"^siapa dirimu\??$",
+        r"^kamu itu siapa\??$",
+        r"^zai siapa\??$",
+    )
+
+    FAREWELL_PATTERNS: Final[tuple[str, ...]] = (
+        r"^bye$",
+        r"^dadah$",
+        r"^sampai jumpa$",
+        r"^sampai nanti$",
+        r"^selamat tinggal$",
+    )
+
+    MEMORY_SAVE_PATTERNS: Final[tuple[str, ...]] = (
+        r"^ingat(?: bahwa)?\s+.+$",
+        r"^ingat ya[, ]+.+$",
+        r"^tolong ingat(?: bahwa)?\s+.+$",
+        r"^simpan(?: bahwa)?\s+.+$",
+        r"^catat(?: bahwa)?\s+.+$",
+        r"^jangan lupa(?: bahwa)?\s+.+$",
+    )
+
+    MEMORY_QUERY_PATTERNS: Final[tuple[str, ...]] = (
+        r"^apa yang kamu ingat.*$",
+        r"^apa yang kamu ingat tentang saya.*$",
+        r"^apa yang kamu ingat tentang aku.*$",
+        r"^apa saja yang kamu ingat.*$",
+        r"^kamu ingat apa.*$",
+        r"^tampilkan memory.*$",
+        r"^tampilkan memori.*$",
+        r"^lihat memory.*$",
+        r"^lihat memori.*$",
+        r"^memory saya apa\??$",
+        r"^memori saya apa\??$",
+        r"^apa yang anda ingat.*$",
+    )
+
+    MEMORY_DELETE_PATTERNS: Final[tuple[str, ...]] = (
+        r"^hapus memory.*$",
+        r"^hapus memori.*$",
+        r"^lupakan memory.*$",
+        r"^lupakan memori.*$",
+        r"^lupakan bahwa.*$",
+        r"^hapus ingatan.*$",
+    )
+
+    MEMORY_COUNT_PATTERNS: Final[tuple[str, ...]] = (
+        r"^berapa memory\??$",
+        r"^berapa memori\??$",
+        r"^jumlah memory\??$",
+        r"^jumlah memori\??$",
+        r"^ada berapa memory\??$",
+        r"^ada berapa memori\??$",
+    )
+
+    STATUS_PATTERNS: Final[tuple[str, ...]] = (
+        r"^status zai\??$",
+        r"^zai status\??$",
+        r"^cek status\??$",
+        r"^apakah zai online\??$",
+        r"^zai online\??$",
+        r"^server status\??$",
+    )
+
+    HELP_PATTERNS: Final[tuple[str, ...]] = (
+        r"^help$",
+        r"^bantuan$",
+        r"^tolong$",
+        r"^apa yang bisa kamu lakukan\??$",
+        r"^kamu bisa apa\??$",
+        r"^fitur kamu apa saja\??$",
+    )
+
+    CALCULATION_PATTERNS: Final[tuple[str, ...]] = (
+        r"^hitung\b.*$",
+        r"^berapa hasil\b.*$",
+        r"^berapa\b.*\+.*$",
+        r"^berapa\b.*-.*$",
+        r"^berapa\b.*\*.*$",
+        r"^berapa\b.*/.*$",
+    )
+
+    SEARCH_KEYWORDS: Final[tuple[str, ...]] = (
+        "cari ",
+        "carikan ",
+        "search ",
+        "temukan ",
+        "find ",
+        "berita terbaru",
+        "informasi terbaru",
+        "riset ",
+        "research ",
+    )
+
+    CODING_KEYWORDS: Final[tuple[str, ...]] = (
+        "buatkan kode",
+        "buat kode",
+        "programkan",
+        "coding",
+        "kode python",
+        "kode dart",
+        "kode flutter",
+        "debug",
+        "debugging",
+        "error python",
+        "error flutter",
+        "error dart",
+        "syntaxerror",
+        "traceback",
+        "stack trace",
+        "full code",
+        "full final",
+        "program lengkap",
+    )
+
+    def __init__(self) -> None:
+        """Initialize the stateless intent engine."""
+        self._rules = self._build_rules()
+
+    # ========================================================
+    # NORMALIZATION
+    # ========================================================
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        """
+        Normalize whitespace and casing.
+
+        Args:
+            text: Raw user input.
+
+        Returns:
+            Normalized user input.
+        """
+        if not isinstance(text, str):
+            return ""
+
+        text = text.strip().lower()
+
+        if not text:
+            return ""
+
+        text = re.sub(r"\s+", " ", text)
+
+        return text[:MAX_INPUT_LENGTH]
+
+    # ========================================================
+    # RULE BUILD
+    # ========================================================
+
+    def _build_rules(self) -> tuple[tuple[str, str, float], ...]:
+        """Build ordered regex classification rules."""
+        rules: list[tuple[str, str, float]] = []
+
+        self._append_patterns(
+            rules,
+            INTENT_GREETING,
+            self.GREETING_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_IDENTITY,
+            self.IDENTITY_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_FAREWELL,
+            self.FAREWELL_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_MEMORY_SAVE,
+            self.MEMORY_SAVE_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_MEMORY_QUERY,
+            self.MEMORY_QUERY_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_MEMORY_DELETE,
+            self.MEMORY_DELETE_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_MEMORY_COUNT,
+            self.MEMORY_COUNT_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_STATUS,
+            self.STATUS_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_HELP,
+            self.HELP_PATTERNS,
+            HIGH_CONFIDENCE,
+        )
+
+        self._append_patterns(
+            rules,
+            INTENT_CALCULATION,
+            self.CALCULATION_PATTERNS,
+            MEDIUM_CONFIDENCE,
+        )
+
+        return tuple(rules)
+
+    @staticmethod
+    def _append_patterns(
+        rules: list[tuple[str, str, float]],
+        intent: str,
+        patterns: tuple[str, ...],
+        confidence: float,
+    ) -> None:
+        """Append a group of patterns to the classifier."""
+        for pattern in patterns:
+            rules.append(
+                (
+                    pattern,
+                    intent,
+                    confidence,
+                )
+            )
+
+    # ========================================================
+    # CLASSIFICATION
+    # ========================================================
+
+    def classify(self, text: str) -> IntentResult:
+        """
+        Classify a user message.
+
+        Args:
+            text: Raw user message.
+
+        Returns:
+            Structured intent result.
+        """
+        normalized = self.normalize(text)
+
+        if not normalized:
+            return IntentResult(
+                intent=INTENT_GENERAL,
+                confidence=DEFAULT_CONFIDENCE,
+                normalized_text="",
+            )
+
+        # Exact/regex rules first.
+        result = self._classify_rules(normalized)
+
+        if result is not None:
+            return result
+
+        # Keyword-based categories.
+        result = self._classify_keywords(normalized)
+
+        if result is not None:
+            return result
+
+        return IntentResult(
+            intent=INTENT_GENERAL,
+            confidence=DEFAULT_CONFIDENCE,
+            normalized_text=normalized,
+        )
+
+    def _classify_rules(
+        self,
+        normalized: str,
+    ) -> Optional[IntentResult]:
+        """Classify using deterministic regex rules."""
+        for pattern, intent, confidence in self._rules:
+            if re.match(pattern, normalized, re.IGNORECASE):
+                return IntentResult(
+                    intent=intent,
+                    confidence=confidence,
+                    normalized_text=normalized,
+                    matched_pattern=pattern,
+                )
+
+        return None
+
+    def _classify_keywords(
+        self,
+        normalized: str,
+    ) -> Optional[IntentResult]:
+        """Classify using lower-cost keyword rules."""
+        if self._contains_any(
+            normalized,
+            self.SEARCH_KEYWORDS,
+        ):
+            return IntentResult(
+                intent=INTENT_SEARCH,
+                confidence=MEDIUM_CONFIDENCE,
+                normalized_text=normalized,
+            )
+
+        if self._contains_any(
+            normalized,
+            self.CODING_KEYWORDS,
+        ):
+            return IntentResult(
+                intent=INTENT_CODE,
+                confidence=MEDIUM_CONFIDENCE,
+                normalized_text=normalized,
+            )
+
+        return None
+
+    @staticmethod
+    def _contains_any(
+        text: str,
+        keywords: tuple[str, ...],
+    ) -> bool:
+        """Return True when any keyword exists in text."""
+        return any(
+            keyword in text
+            for keyword in keywords
+        )
+
+    # ========================================================
+    # PUBLIC HELPERS
+    # ========================================================
+
+    def get_intent(self, text: str) -> str:
+        """
+        Return only the detected intent name.
+        """
+        return self.classify(text).intent
+
+    def is_intent(
+        self,
+        text: str,
+        intent: str,
+    ) -> bool:
+        """
+        Check whether text belongs to an intent.
+        """
+        return self.get_intent(text) == intent
+
+    def analyze(self, text: str) -> dict:
+        """
+        Return a JSON-friendly intent analysis.
+        """
+        return self.classify(text).to_dict()
+
+
+# ============================================================
+# SINGLETON
+# ============================================================
+
+_intent_engine: Optional[IntentEngine] = None
+
+
+def get_intent_engine() -> IntentEngine:
+    """
+    Return the shared IntentEngine instance.
+
+    Keeping one stateless instance avoids unnecessary object
+    construction while allowing the orchestrator to access
+    the same classifier consistently.
+    """
+    global _intent_engine
+
+    if _intent_engine is None:
+        _intent_engine = IntentEngine()
+
+    return _intent_engine

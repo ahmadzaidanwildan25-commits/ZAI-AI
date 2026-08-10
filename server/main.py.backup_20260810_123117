@@ -1368,8 +1368,7 @@ async def info():
         "max_history": MAX_HISTORY,
         "max_history_chars": MAX_HISTORY_CHARS,
         "max_message_chars": MAX_MESSAGE_CHARS,
-    }
-def get_intent_engine() -> IntentEngine:
+    }def get_intent_engine() -> IntentEngine:
     if intent_engine is None:
         raise RuntimeError(
             "Intent engine is not initialized."
