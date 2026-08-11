@@ -1,22 +1,10 @@
 ﻿"""
-ZAI Intent subsystem.
+ZAI Intent Intelligence Package.
 """
 
-from .engine import (
-    IntentEngine,
-    IntentResult,
-    get_intent_engine,
-)
-
-from .router import (
-    IntentRouter,
-    RouteDecision,
-)
+from .engine import IntentEngine, get_intent_engine
 
 __all__ = [
     "IntentEngine",
-    "IntentResult",
     "get_intent_engine",
-    "IntentRouter",
-    "RouteDecision",
 ]

@@ -1,4 +1,4 @@
-﻿"""
+"""
 ============================================================
 SUPER ZAI - AI BRAIN
 ============================================================
@@ -220,147 +220,93 @@ class AIBrain:
         message: str,
     ) -> Dict[str, Any]:
 
-        text = str(message or "").strip()
-
-        # ====================================================
-        # REAL INTENT ENGINE
-        # ====================================================
-
-        if self.intent_engine is not None:
-
-            try:
-
-                result = None
-
-                if hasattr(
-                    self.intent_engine,
-                    "analyze",
-                ):
-                    result = self.intent_engine.analyze(text)
-
-                elif hasattr(
-                    self.intent_engine,
-                    "process",
-                ):
-                    result = self.intent_engine.process(text)
-
-                elif hasattr(
-                    self.intent_engine,
-                    "detect",
-                ):
-                    result = self.intent_engine.detect(text)
-
-                if hasattr(
-                    result,
-                    "to_dict",
-                ):
-                    result = result.to_dict()
-
-                if isinstance(
-                    result,
-                    dict,
-                ):
-                    return result
-
-            except Exception:
-
-                try:
-                    self._runtime["errors"] += 1
-                except Exception:
-                    pass
-
-        # ====================================================
-        # MEMORY SAVE FALLBACK
-        # ====================================================
-
-        lowered = text.lower()
-
-        memory_save_prefixes = [
-            "nama saya ",
-            "nama ku ",
-            "namaku ",
-            "saya bernama ",
-            "panggil saya ",
-        ]
-
-        for prefix in memory_save_prefixes:
-
-            if lowered.startswith(prefix):
-
-                value = text[
-                    len(prefix):
-                ].strip()
-
-                if value:
-
-                    return {
-                        "intent": "memory_save",
-                        "confidence": 0.99,
-                        "normalized_text": text,
-                        "entities": {
-                            "memory_key": "name",
-                            "memory_value": value,
-                        },
-                        "tool": None,
-                        "arguments": {},
-                        "reasoning": (
-                            "Informasi nama "
-                            "terdeteksi sebagai "
-                            "memory identity."
-                        ),
-                    }
-
-        # ====================================================
-        # MEMORY GET FALLBACK
-        # ====================================================
-
-        normalized = (
-            lowered
-            .replace("?", "")
-            .strip()
-        )
-
-        memory_name_questions = {
-            "siapa nama saya",
-            "nama saya siapa",
-            "ingat nama saya",
-            "kamu ingat nama saya",
-            "apakah kamu ingat nama saya",
-        }
-
-        if normalized in memory_name_questions:
+        if self.intent_engine is None:
 
             return {
-                "intent": "memory_get",
-                "confidence": 0.99,
-                "normalized_text": text,
-                "entities": {
-                    "memory_key": "name",
-                },
+                "intent": "general",
+                "confidence": 0.0,
+                "normalized_text": message,
+                "entities": {},
                 "tool": None,
                 "arguments": {},
-                "reasoning": (
-                    "Pengguna meminta "
-                    "informasi nama dari memory."
-                ),
+                "reasoning": "Intent engine belum tersedia.",
             }
 
-        # ====================================================
-        # GENERAL
-        # ====================================================
+        try:
 
-        return {
-            "intent": "general",
-            "confidence": 0.0,
-            "normalized_text": text,
-            "entities": {},
-            "tool": None,
-            "arguments": {},
-            "reasoning": (
-                "Tidak ada intent khusus "
-                "yang terdeteksi."
-            ),
-        }
+            if hasattr(
+                self.intent_engine,
+                "analyze",
+            ):
+
+                result = self.intent_engine.analyze(
+                    message
+                )
+
+            elif hasattr(
+                self.intent_engine,
+                "process",
+            ):
+
+                result = self.intent_engine.process(
+                    message
+                )
+
+            elif hasattr(
+                self.intent_engine,
+                "detect",
+            ):
+
+                result = self.intent_engine.detect(
+                    message
+                )
+
+            else:
+
+                return {
+                    "intent": "general",
+                    "confidence": 0.0,
+                    "normalized_text": message,
+                    "entities": {},
+                    "tool": None,
+                    "arguments": {},
+                    "reasoning": "API intent engine tidak ditemukan.",
+                }
+
+            if hasattr(result, "to_dict"):
+                return result.to_dict()
+
+            if isinstance(result, dict):
+                return result
+
+            return {
+                "intent": "general",
+                "confidence": 0.0,
+                "normalized_text": message,
+                "entities": {},
+                "tool": None,
+                "arguments": {},
+                "reasoning": "Format intent tidak dikenali.",
+            }
+
+        except Exception as exc:
+
+            self._runtime["errors"] += 1
+
+            return {
+                "intent": "general",
+                "confidence": 0.0,
+                "normalized_text": message,
+                "entities": {},
+                "tool": None,
+                "arguments": {},
+                "reasoning": str(exc),
+            }
+
+    # ========================================================
+    # MEMORY INTENT
+    # ========================================================
+
     def _handle_memory_intent(
         self,
         intent_result: Dict[str, Any],
@@ -698,318 +644,7 @@ class AIBrain:
     # MAIN THINK
     # ========================================================
 
-
-    # ========================================================
-    # MEMORY SAVE HANDLER
-    # ========================================================
-
-    def _handle_memory_save(
-        self,
-        intent_result: Dict[str, Any],
-    ) -> Dict[str, Any]:
-
-        entities = (
-            intent_result.get(
-                "entities",
-                {},
-            )
-            or {}
-        )
-
-        key = str(
-            entities.get(
-                "memory_key",
-                "",
-            )
-        ).strip()
-
-        value = str(
-            entities.get(
-                "memory_value",
-                "",
-            )
-        ).strip()
-
-        if not key or not value:
-
-            return {
-                "success": False,
-                "response": (
-                    "Saya belum mendapatkan "
-                    "informasi yang perlu disimpan."
-                ),
-            }
-
-        if self.memory_manager is None:
-
-            return {
-                "success": False,
-                "response": (
-                    "Memory Manager belum aktif."
-                ),
-            }
-
-        try:
-
-            saved = self.memory_manager.save(
-                key=key,
-                value=value,
-                category="identity",
-                importance=10,
-            )
-
-            if saved:
-
-                return {
-                    "success": True,
-                    "response": (
-                        f"Baik. Saya sudah menyimpan "
-                        f"bahwa {key} Anda adalah {value}."
-                    ),
-                }
-
-            return {
-                "success": False,
-                "response": (
-                    "Memory belum berhasil disimpan."
-                ),
-            }
-
-        except Exception as exc:
-
-            try:
-                self._runtime["errors"] += 1
-            except Exception:
-                pass
-
-            return {
-                "success": False,
-                "response": (
-                    "Terjadi kesalahan saat "
-                    "menyimpan memory."
-                ),
-                "error": str(exc),
-            }
-
-    # ========================================================
-    # MEMORY GET HANDLER
-    # ========================================================
-
-    def _handle_memory_get(
-        self,
-        intent_result: Dict[str, Any],
-    ) -> Dict[str, Any]:
-
-        entities = (
-            intent_result.get(
-                "entities",
-                {},
-            )
-            or {}
-        )
-
-        key = str(
-            entities.get(
-                "memory_key",
-                "",
-            )
-        ).strip()
-
-        if not key:
-
-            return {
-                "success": False,
-                "response": (
-                    "Memory yang diminta tidak diketahui."
-                ),
-            }
-
-        if self.memory_manager is None:
-
-            return {
-                "success": False,
-                "response": (
-                    "Memory Manager belum aktif."
-                ),
-            }
-
-        try:
-
-            value = self.memory_manager.get(
-                key
-            )
-
-            if value is not None:
-
-                return {
-                    "success": True,
-                    "response": str(value),
-                    "value": str(value),
-                }
-
-            return {
-                "success": False,
-                "response": (
-                    "Saya belum memiliki "
-                    "memory tersebut."
-                ),
-            }
-
-        except Exception as exc:
-
-            try:
-                self._runtime["errors"] += 1
-            except Exception:
-                pass
-
-            return {
-                "success": False,
-                "response": (
-                    "Terjadi kesalahan saat "
-                    "membaca memory."
-                ),
-                "error": str(exc),
-            }
-
-    # ========================================================
-    # SUPER ZAI MEMORY ROUTER
-    # ========================================================
-
     def think(
-        self,
-        user_message: str,
-        conversation: Optional[List[Dict[str, str]]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-
-        message = str(
-            user_message or ""
-        ).strip()
-
-        # ----------------------------------------------------
-        # INTENT
-        # ----------------------------------------------------
-
-        intent_result = self._detect_intent(
-            message
-        )
-
-        intent = str(
-            intent_result.get(
-                "intent",
-                "general",
-            )
-        )
-
-        # ----------------------------------------------------
-        # MEMORY SAVE
-        # ----------------------------------------------------
-
-        if intent == "memory_save":
-
-            result = self._handle_memory_save(
-                intent_result
-            )
-
-            return {
-                "user_message": message,
-                "conversation": (
-                    conversation
-                    if conversation is not None
-                    else []
-                ),
-                "intent": intent,
-                "entities": (
-                    intent_result.get(
-                        "entities",
-                        {},
-                    )
-                    or {}
-                ),
-                "plan": [],
-                "observations": [
-                    {
-                        "tool": "memory",
-                        "success": result.get(
-                            "success",
-                            False,
-                        ),
-                        "response": result.get(
-                            "response",
-                            "",
-                        ),
-                    }
-                ],
-                "metadata": {
-                    "intent_result": intent_result,
-                    "memory_action": "save",
-                },
-                "final_response": result.get(
-                    "response",
-                    "",
-                ),
-            }
-
-        # ----------------------------------------------------
-        # MEMORY GET
-        # ----------------------------------------------------
-
-        if intent == "memory_get":
-
-            result = self._handle_memory_get(
-                intent_result
-            )
-
-            return {
-                "user_message": message,
-                "conversation": (
-                    conversation
-                    if conversation is not None
-                    else []
-                ),
-                "intent": intent,
-                "entities": (
-                    intent_result.get(
-                        "entities",
-                        {},
-                    )
-                    or {}
-                ),
-                "plan": [],
-                "observations": [
-                    {
-                        "tool": "memory",
-                        "success": result.get(
-                            "success",
-                            False,
-                        ),
-                        "response": result.get(
-                            "response",
-                            "",
-                        ),
-                    }
-                ],
-                "metadata": {
-                    "intent_result": intent_result,
-                    "memory_action": "get",
-                },
-                "final_response": result.get(
-                    "response",
-                    "",
-                ),
-            }
-
-        # ----------------------------------------------------
-        # NORMAL BRAIN
-        # ----------------------------------------------------
-
-        return self._think_core(
-            user_message=message,
-            conversation=conversation,
-            metadata=metadata,
-        )
-
-    def _think_core(
         self,
         user_message: str,
         conversation: Optional[

@@ -1,15 +1,18 @@
-﻿"""
-ZAI AI package.
+﻿from .agents import (
+    AgentResult,
+    BaseAgent,
+    AgentRegistry,
+    AgentRouter,
+    AgentRuntime,
+    GeneralAgent,
+)
 
-Public AI components:
-- AIBrain
-- CognitiveOrchestrator
-"""
-
-from .brain import AIBrain
-from .cognitive_orchestrator import CognitiveOrchestrator
 
 __all__ = [
-    "AIBrain",
-    "CognitiveOrchestrator",
+    "AgentResult",
+    "BaseAgent",
+    "AgentRegistry",
+    "AgentRouter",
+    "AgentRuntime",
+    "GeneralAgent",
 ]
