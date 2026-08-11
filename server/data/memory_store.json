@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0.0",
+  "manager_version": "1.0.0",
+  "exported_at": "2026-08-11T20:32:27.158448+07:00",
+  "memories": [
+    {
+      "memory_id": "15612155-1bde-440a-ab26-bbc34fe41494",
+      "content": "Super ZAI adalah project utama.",
+      "namespace": "default",
+      "category": "general",
+      "importance": 0.5,
+      "confidence": 1.0,
+      "status": "active",
+      "tags": [],
+      "metadata": {},
+      "created_at": "2026-08-11T20:31:08.380481+07:00",
+      "updated_at": "2026-08-11T20:31:08.380481+07:00",
+      "accessed_at": null,
+      "expires_at": null,
+      "archived_at": null,
+      "deleted_at": null,
+      "access_count": 0,
+      "version": 1,
+      "content_hash": "aa1224d72c84c841652262f8a516f12f52a0d6c43d1308727b5c556836518dfb",
+      "source": "zai",
+      "pinned": false
+    },
+    {
+      "memory_id": "3eb93430-cebd-4551-8f07-9bd4af6f97ad",
+      "content": "User: Lanjut pembangunan ZAI ZAI: Siap, kita lanjut ke memory integration.",
+      "namespace": "default",
+      "category": "general",
+      "importance": 0.5,
+      "confidence": 1.0,
+      "status": "active",
+      "tags": [],
+      "metadata": {},
+      "created_at": "2026-08-11T20:32:27.157450+07:00",
+      "updated_at": "2026-08-11T20:32:27.157450+07:00",
+      "accessed_at": null,
+      "expires_at": null,
+      "archived_at": null,
+      "deleted_at": null,
+      "access_count": 0,
+      "version": 1,
+      "content_hash": "9aea499570bb02cbdfabeaa030aa84303d0d0417f4c6c7cbf2bec2dc3b5b971a",
+      "source": "zai",
+      "pinned": false
+    }
+  ],
+  "statistics": {
+    "manager": "MemoryManager",
+    "version": "1.0.0",
+    "total_memories": 2,
+    "active_memories": 2,
+    "archived_memories": 0,
+    "deleted_memories": 0,
+    "expired_memories": 0,
+    "pinned_memories": 0,
+    "average_importance": 0.5,
+    "average_confidence": 1.0,
+    "execution_count": 2,
+    "success_count": 2,
+    "failure_count": 0,
+    "success_rate": 100.0,
+    "failure_rate": 0.0,
+    "search_count": 0,
+    "write_count": 1,
+    "delete_count": 0,
+    "archive_count": 0,
+    "restore_count": 0,
+    "history_size": 2,
+    "namespace_distribution": {
+      "default": 2
+    },
+    "category_distribution": {
+      "general": 2
+    },
+    "tag_distribution": {}
+  }
+}

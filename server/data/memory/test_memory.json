@@ -1,0 +1,92 @@
+{
+  "memory_core": "ZAI",
+  "version": "1.0.0",
+  "saved_at": "2026-08-11T08:56:58.501462+00:00",
+  "memories": [
+    {
+      "memory_id": "mem_61cfcb92dcc51be668931555",
+      "memory_type": "project",
+      "content": "ZAI sedang dibangun sebagai AI assistant multi-agent",
+      "importance": 0.95,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "zai",
+        "development",
+        "project"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:55:31.901315+00:00",
+      "updated_at": "2026-08-11T08:55:31.901315+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    },
+    {
+      "memory_id": "mem_58423002055a65a8eba1220b",
+      "memory_type": "preference",
+      "content": "User ingin setiap kode FULL FINAL dibuat lengkap dan production-oriented",
+      "importance": 0.8,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "full_final",
+        "coding"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:56:22.258474+00:00",
+      "updated_at": "2026-08-11T08:56:22.258474+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    },
+    {
+      "memory_id": "mem_a6370d9b47d89fefd9e74801",
+      "memory_type": "fact",
+      "content": "ZAI memiliki multi-agent architecture",
+      "importance": 0.8,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "zai",
+        "architecture"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:56:37.184902+00:00",
+      "updated_at": "2026-08-11T08:56:37.184902+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    },
+    {
+      "memory_id": "mem_c9449f48f8112b9d6ae7fe56",
+      "memory_type": "goal",
+      "content": "Membangun ZAI menjadi AI assistant yang sangat canggih",
+      "importance": 0.9,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "zai",
+        "goal"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:56:58.500461+00:00",
+      "updated_at": "2026-08-11T08:56:58.500461+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    }
+  ]
+}

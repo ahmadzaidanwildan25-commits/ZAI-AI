@@ -1,0 +1,25 @@
+{
+  "memory_core": "ZAI",
+  "version": "1.0.0",
+  "saved_at": "2026-08-11T08:59:38.703100+00:00",
+  "memories": [
+    {
+      "memory_id": "mem_c82a95a0f492d27463fa74c2",
+      "memory_type": "context",
+      "content": "Async memory ZAI",
+      "importance": 0.7,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [],
+      "source": "system",
+      "created_at": "2026-08-11T08:59:38.701106+00:00",
+      "updated_at": "2026-08-11T08:59:38.701106+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    }
+  ]
+}

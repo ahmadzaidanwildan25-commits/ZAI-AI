@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "memory_manager_version": "1.0.0",
+  "exported_at": "2026-08-11T12:26:32.248360+00:00",
+  "memories": [
+    {
+      "memory_id": "b6d27cca-e057-40b1-88b4-5375e84bd966",
+      "namespace": "default",
+      "key": "test_key",
+      "value": "Super ZAI",
+      "memory_type": "fact",
+      "source": "zai",
+      "importance": 0.5,
+      "confidence": 0.5,
+      "tags": [
+        "test"
+      ],
+      "metadata": {},
+      "created_at": "2026-08-11T12:26:32.248360+00:00",
+      "updated_at": "2026-08-11T12:26:32.248360+00:00",
+      "accessed_at": "2026-08-11T12:26:32.248360+00:00",
+      "access_count": 0,
+      "version": 1,
+      "active": true,
+      "expires_at": null
+    }
+  ],
+  "conversations": {},
+  "statistics": {
+    "total_memories": 1,
+    "active_memories": 1,
+    "expired_memories": 0,
+    "total_conversation_turns": 0,
+    "session_count": 0,
+    "namespace_count": 1,
+    "tag_count": 1,
+    "access_count": 0,
+    "average_importance": 0.5,
+    "average_confidence": 0.5,
+    "memory_type_distribution": {
+      "fact": 1
+    },
+    "namespace_distribution": {
+      "default": 1
+    }
+  }
+}

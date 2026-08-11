@@ -1,0 +1,69 @@
+{
+  "memory_core": "ZAI",
+  "version": "1.0.0",
+  "saved_at": "2026-08-11T08:59:57.303022+00:00",
+  "memories": [
+    {
+      "memory_id": "mem_e2ac25f4cab17d98520c81f8",
+      "memory_type": "fact",
+      "content": "ZAI adalah AI multi-agent",
+      "importance": 0.8,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "zai",
+        "ai"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:59:57.282763+00:00",
+      "updated_at": "2026-08-11T08:59:57.282763+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    },
+    {
+      "memory_id": "mem_337adefe47e63e6cd246066b",
+      "memory_type": "preference",
+      "content": "Gunakan kode production-oriented",
+      "importance": 0.8,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "coding"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:59:57.285727+00:00",
+      "updated_at": "2026-08-11T08:59:57.285727+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    },
+    {
+      "memory_id": "mem_4efe884d4cb52565b796dc77",
+      "memory_type": "goal",
+      "content": "Membangun Super ZAI",
+      "importance": 0.9,
+      "confidence": 1.0,
+      "relevance": 0.0,
+      "tags": [
+        "zai",
+        "goal"
+      ],
+      "source": "user",
+      "created_at": "2026-08-11T08:59:57.302020+00:00",
+      "updated_at": "2026-08-11T08:59:57.302020+00:00",
+      "accessed_at": null,
+      "access_count": 0,
+      "expires_at": null,
+      "metadata": {},
+      "active": true,
+      "version": 1
+    }
+  ]
+}
